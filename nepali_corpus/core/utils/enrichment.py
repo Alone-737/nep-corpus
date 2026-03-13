@@ -22,6 +22,20 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
+# ── Global Noise Selectors (Aggressive Sanitization) ───────────────────
+
+GLOBAL_NOISE_SELECTORS = [
+    # Splash ads and overlays
+    "#ok-splash-wrapper", ".td-modal-image", ".pop-up-wrapper",
+    ".modal-backdrop", ".interstitial-ad", ".overlay-container",
+    # Social sidebars and floating widgets
+    ".a2a_kit", ".social-share-fixed", ".floating-social",
+    # Sticky headers/footers often caught in density
+    ".sticky-bottom-ad", ".top-banner-ad",
+    # Common news junk
+    ".related-links", ".trending-news-sidebar", ".newsletter-popup",
+]
+
 # ── Expanded CSS selectors for Nepali news themes ───────────────────────
 
 CONTENT_SELECTORS = [
@@ -338,6 +352,67 @@ def extract_text(
             logger.info(f"PDF extraction successful: {len(pdf_text)} chars extracted")
             extracted_text = pdf_text
             cleaned_so_far = clean_extracted_text(extracted_text)
+
+    # --- Strategy 7: Multi-Extractor Voting (The Broad Fix) ---
+    # Combine results from different extractors and choose the one with the best "quality score"
+    candidates = []
+    
+    # Candidate 1: Trafilatura
+    if use_trafilatura:
+        try:
+            import trafilatura
+            t_text = trafilatura.extract(html, url=url, include_comments=False)
+            if t_text: candidates.append(("trafilatura", t_text))
+        except Exception: pass
+
+    # Candidate 2: Readability
+    try:
+        from readability import Document
+        doc = Document(html)
+        r_text = BeautifulSoup(doc.summary(), "html.parser").get_text("\n")
+        if r_text: candidates.append(("readability", r_text))
+    except Exception: pass
+
+    # Candidate 3: BS4 with expanded selectors (after sanitization)
+    try:
+        soup = BeautifulSoup(html, "lxml") if "lxml" in sys.modules else BeautifulSoup(html, "html.parser")
+        # Global Sanitization: Aggressively strip noise before extraction
+        for selector in GLOBAL_NOISE_SELECTORS:
+            for noise in soup.select(selector):
+                noise.decompose()
+        
+        # Try our best CSS selector
+        best_css = ""
+        for selector in CONTENT_SELECTORS:
+            node = soup.select_one(selector)
+            if node:
+                txt = node.get_text("\n").strip()
+                if len(txt) > len(best_css):
+                    best_css = txt
+        if best_css: candidates.append(("css_selectors", best_css))
+    except Exception: pass
+
+    # Voting Logic: Score candidates by (Length * DevanagariDensity)
+    best_score = -1.0
+    winner_text = extracted_text # Default to what we had
+
+    for name, text in candidates:
+        cleaned = clean_extracted_text(text)
+        if not cleaned: continue
+        
+        # Scoring: heavily favor Devanagari, but don't ignore valid English news
+        dv_ratio = devanagari_ratio(cleaned)
+        # Score = Log(Length) * (1 + DevanagariDensity)
+        # We use log to avoid very long boilerplate outvoting shorter high-quality text
+        import math
+        score = math.log(len(cleaned) + 1) * (1.0 + dv_ratio)
+        
+        if score > best_score:
+            best_score = score
+            winner_text = text
+            logger.debug(f"Extractor {name} winning with score {score:.2f} (dv: {dv_ratio:.2f})")
+
+    extracted_text = winner_text
 
     if not extracted_text:
         return ""

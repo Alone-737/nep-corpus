@@ -119,8 +119,10 @@ class ScrapeCoordinator:
         max_concurrent: int = 20,
         source_timeout: int = 300,
         checkpoint_interval: int = 300,
-        ocr_enabled: bool = True,
-        pdf_enabled: bool = True,
+        ocr_enabled: bool = False,
+        pdf_enabled: bool = False,
+        enrichment_workers: int = 10,
+        skip_successful_only: bool = False,
     ) -> None:
         self._storage = storage
         self.state = ScrapeState()
@@ -128,6 +130,8 @@ class ScrapeCoordinator:
         self._stop_event = asyncio.Event()
         self._shutdown_event = asyncio.Event()
         self._internet_down = False
+        self._enrichment_workers = enrichment_workers
+        self._skip_successful_only = skip_successful_only
 
         # Run tracking state
         self._run_id: Optional[str] = None
@@ -162,6 +166,17 @@ class ScrapeCoordinator:
     async def _load_visited_urls(self, session: Any) -> None:
         """Preload visited URLs from DB into memory for fast O(1) dedup."""
         try:
+            if self._skip_successful_only:
+                logger.info("Retrying failures mode: Only skipping URLs found in training_documents...")
+                # Fetch URL hashes from training_documents instead of visited_urls
+                if hasattr(session, 'service') and session.service._db:
+                    rows = await session.service._db.fetch(
+                        "SELECT url FROM training_documents"
+                    )
+                    self._visited_urls = {row[0] for row in rows}
+                    logger.info("Loaded %d successful URLs to skip", len(self._visited_urls))
+                return
+
             count = await session.count_urls()
             if count > 0:
                 logger.info("Loading %d visited URLs into memory...", count)
@@ -304,6 +319,101 @@ class ScrapeCoordinator:
                 num_sources=num_sources,
             )
         )
+
+    async def run_rerun_failed(
+        self,
+        *,
+        batch_size: int = 100,
+        limit: Optional[int] = None,
+        output_dir: Optional[str] = None,
+        log_file: Optional[str] = None,
+    ) -> None:
+        """Rerun extraction for existing raw_records with NULL content."""
+        if self._task and not self._task.done():
+            raise RuntimeError("Scraper already running")
+
+        self._stop_event = asyncio.Event()
+        self._shutdown_event = asyncio.Event()
+        self.state.reset()
+        self.state.running = True
+        self.state.start_time = time.time()
+        self._run_id = f"rerun_failed_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        # Initialize logging
+        if log_file:
+            self._setup_logging(log_file)
+
+        session = self._storage.create_session()
+        await self._load_visited_urls(session)
+
+        try:
+            # Query NULL records that are NOT in training_documents
+            query = """
+                SELECT r.* FROM raw_records r
+                LEFT JOIN training_documents t ON r.url = t.url
+                WHERE r.content IS NULL AND t.url IS NULL
+            """
+            if limit:
+                query += f" LIMIT {limit}"
+
+            async with self._storage._db.pool.acquire() as conn:
+                rows = await conn.fetch(query)
+                records = []
+                for row in rows:
+                    data = dict(row)
+                    # Handle JSON fields that might be strings
+                    if isinstance(data.get("raw_meta"), str):
+                        try:
+                            data["raw_meta"] = json.loads(data["raw_meta"])
+                        except Exception:
+                            data["raw_meta"] = {}
+                    if isinstance(data.get("tags"), str):
+                        try:
+                            data["tags"] = json.loads(data["tags"])
+                        except Exception:
+                            data["tags"] = []
+
+                    rec = RawRecord(**data)
+                    records.append(rec)
+
+                logger.info("Found %d records needing rerun (NULL content)", len(records))
+                if not records:
+                    logger.info("Nothing to rerun.")
+                    return
+
+                # Process in batches
+                for i in range(0, len(records), batch_size):
+                    if self._shutdown_event.is_set():
+                        break
+                    
+                    batch = records[i : i + batch_size]
+                    logger.info("Rerunning batch %d/%d...", (i // batch_size) + 1, (len(records) // batch_size + 1))
+                    await self._process_immediate_enrichment(session, batch)
+                    
+                    # Update stats
+                    self.state.urls_crawled += len(batch)
+                    
+                    # Periodic logging
+                    if i % (batch_size * 5) == 0:
+                        logger.info("Progress: %d/%d rerun complete", i, len(records))
+
+            logger.info("Rerun-failed run completed.")
+        except Exception as e:
+            logger.error("Rerun-failed failed: %s", e)
+        finally:
+            self.state.running = False
+            if self._log_handler:
+                logger.removeHandler(self._log_handler)
+                self._log_handler.close()
+
+    def _setup_logging(self, log_file: str) -> None:
+        """Helper to redirect logs to a run-specific file."""
+        import logging
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        handler = logging.FileHandler(log_file)
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(handler)
+        self._log_handler = handler
 
     def _build_jobs(
         self,
@@ -516,7 +626,11 @@ class ScrapeCoordinator:
         log_file: Optional[str] = None,
         num_sources: Optional[int] = None,
     ) -> None:
-        self._ocr_enabled = ocr_enabled
+        # Default OCR/PDF to False for News runs unless explicitly enabled
+        if categories and "News" in categories:
+            self._ocr_enabled = ocr_enabled if ocr_enabled is True else False
+        else:
+            self._ocr_enabled = ocr_enabled
         self._pdf_enabled = pdf_enabled
         if log_file:
             self._setup_file_logging(log_file)
@@ -942,7 +1056,8 @@ class ScrapeCoordinator:
                 records, 
                 cache_dir="data/html_cache",
                 ocr_enabled=self._ocr_enabled,
-                pdf_enabled=self._pdf_enabled
+                pdf_enabled=self._pdf_enabled,
+                max_workers=self._enrichment_workers
             )
             
             final_docs = []
@@ -955,22 +1070,23 @@ class ScrapeCoordinator:
                     if len(cleaned.strip()) >= 200:
                         from nepali_corpus.core.utils.normalize import devanagari_ratio
                         ratio = devanagari_ratio(cleaned)
-                        if ratio >= 0.4:
-                            doc_id = hashlib.md5(rec.url.encode()).hexdigest()
-                            doc = TrainingDocument(
-                                id=doc_id,
-                                url=rec.url,
-                                source_id=rec.source_id,
-                                source_name=rec.source_name,
-                                language="ne",
-                                text=cleaned.strip(),
-                                category=rec.category,
-                                published_at=rec.published_at,
-                                date_bs=rec.raw_meta.get("date_bs") if rec.raw_meta else None,
-                            )
-                            final_docs.append(doc)
-                        else:
-                            logger.debug("Skipping doc due to low devanagari ratio (%.2f): %s", ratio, rec.url)
+                        lang = "ne" if ratio >= 0.4 else "en"
+                        
+                        doc_id = hashlib.md5(rec.url.encode()).hexdigest()
+                        doc = TrainingDocument(
+                            id=doc_id,
+                            url=rec.url,
+                            source_id=rec.source_id,
+                            source_name=rec.source_name,
+                            language=lang,
+                            text=cleaned.strip(),
+                            category=rec.category,
+                            published_at=rec.published_at,
+                            date_bs=rec.raw_meta.get("date_bs") if rec.raw_meta else None,
+                        )
+                        final_docs.append(doc)
+                        if lang == "en":
+                            logger.debug("Tagged English article: %s (ratio %.2f)", rec.url, ratio)
             
             if final_docs:
                 await session.store_training_documents(final_docs)
@@ -1057,19 +1173,19 @@ class ScrapeCoordinator:
             training_docs = []
             for text, domain, rec in texts_with_domains:
                 cleaned = self._boilerplate_detector.clean_document(text, domain)
-
                 if len(cleaned) < 200:
                     continue
-                if devanagari_ratio(cleaned) < 0.4:
-                    continue
-
+                
+                ratio = devanagari_ratio(cleaned)
+                lang = "ne" if ratio >= 0.4 else "en"
+                
                 doc_id = hashlib.md5(rec.url.encode()).hexdigest()
                 doc = TrainingDocument(
                     id=doc_id,
                     url=rec.url,
                     source_id=rec.source_id,
                     source_name=rec.source_name,
-                    language="ne",
+                    language=lang,
                     text=cleaned,
                     published_at=rec.published_at,
                     date_bs=rec.raw_meta.get("date_bs") if rec.raw_meta else None,
@@ -1078,6 +1194,8 @@ class ScrapeCoordinator:
                     tags=[],
                 )
                 training_docs.append(doc)
+                if lang == "en":
+                    logger.debug("Tagged English article in post-run enrichment: %s", rec.url)
 
             if training_docs:
                 await session.store_training_documents(training_docs)
