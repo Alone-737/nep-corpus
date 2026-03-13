@@ -226,7 +226,7 @@ def cmd_coordinator(args: argparse.Namespace) -> None:
     from nepali_corpus.core.services.storage.env_storage import EnvStorageService
     from nepali_corpus.core.services.scrapers.control import ScrapeCoordinator
 
-    run_id = args.resume or datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = args.resume or args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = f"data/runs/{run_id}"
     os.makedirs(output_dir, exist_ok=True)
 
@@ -471,6 +471,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--resume",
         metavar="RUN_ID",
         help="Resume an interrupted run by its run_id",
+    )
+    p_coord.add_argument(
+        "--run-id",
+        help="Custom run ID for this session (defaults to timestamp)",
     )
     # Production tuning flags
     p_coord.add_argument("--rate-limit", type=float, default=2.0,
