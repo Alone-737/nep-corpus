@@ -1,10 +1,11 @@
 
 import datetime
+import gzip
 import logging
 import re
-import time
+from collections import Counter, deque
 from typing import List, Set, Optional, Dict
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qsl, urlencode, urlunparse
 import xml.etree.ElementTree as ET
 
 from .scraper_base import ScraperBase
@@ -24,6 +25,61 @@ class DiscoveryMiner(ScraperBase):
         self.discovered_urls: Set[str] = set()
         self.visited_urls: Set[str] = set()
         self._robots_crawl_delay: Optional[float] = None
+        self._robots_sitemaps: Set[str] = set()
+
+        self._tracking_params = {
+            "utm_source",
+            "utm_medium",
+            "utm_campaign",
+            "utm_term",
+            "utm_content",
+            "utm_id",
+            "gclid",
+            "fbclid",
+            "ref",
+            "ref_src",
+            "mc_cid",
+            "mc_eid",
+        }
+        self._article_query_keys = {
+            "p",
+            "id",
+            "post",
+            "post_id",
+            "postid",
+            "article",
+            "article_id",
+            "story",
+            "storyid",
+            "newsid",
+            "news_id",
+        }
+        self._static_exts = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".webp",
+            ".svg",
+            ".ico",
+            ".css",
+            ".js",
+            ".json",
+            ".xml",
+            ".mp3",
+            ".mp4",
+            ".wav",
+            ".avi",
+            ".mov",
+            ".zip",
+            ".rar",
+            ".7z",
+            ".tar",
+            ".gz",
+            ".tgz",
+            ".exe",
+            ".apk",
+        }
 
     def discover_all(self, max_pages: int = 200, batch_size: int = 50):
         """Run all discovery methods and yield URLs in batches."""
@@ -35,7 +91,9 @@ class DiscoveryMiner(ScraperBase):
             # Filter and normalize
             filtered = []
             for u in new_urls:
-                clean_u = u.split("#")[0].rstrip("/")
+                clean_u = self._normalize_url(u)
+                if not clean_u:
+                    continue
                 if self._is_internal(clean_u) and clean_u not in reported_urls:
                     filtered.append(clean_u)
                     reported_urls.add(clean_u)
@@ -59,21 +117,32 @@ class DiscoveryMiner(ScraperBase):
         nav_urls = {u for u in self.discover_from_navigation() if self._is_potential_article(u)}
         yield from _batch_and_yield(nav_urls)
 
-        # 4. Pattern-based discovery
+        # 4. Homepage article blocks (often expose recent posts)
+        homepage_articles = {
+            u for u in self.discover_from_homepage_articles() if self._is_potential_article(u)
+        }
+        yield from _batch_and_yield(homepage_articles)
+
+        # 5. Pattern-based discovery
         patterns = {u for u in self.discover_common_patterns() if self._is_potential_article(u)}
         yield from _batch_and_yield(patterns)
 
-        # 5. Pagination on listing pages discovered so far
+        # 6. URL tree discovery from already-seen URLs
+        if reported_urls:
+            tree_urls = self.discover_from_url_tree(reported_urls)
+            yield from _batch_and_yield(tree_urls)
+
+        # 7. Pagination on listing pages discovered so far
         listing_pages = {u for u in reported_urls if self._is_listing_page(u)}
         if listing_pages:
             pagination_urls = self.discover_from_pagination(listing_pages, max_pages=max_pages)
             yield from _batch_and_yield(pagination_urls)
 
-        # 6. Archive / date-based discovery
+        # 8. Archive / date-based discovery
         archive_urls = self.discover_from_archives(months_back=24)
         yield from _batch_and_yield(archive_urls)
 
-        # 7. Deeper BFS crawl if we still have very few URLs
+        # 9. Deeper BFS crawl if we still have very few URLs
         if len(reported_urls) < 50:
             crawl_urls = self.crawl_internal_links(max_pages=max_pages)
             yield from _batch_and_yield(crawl_urls)
@@ -100,8 +169,14 @@ class DiscoveryMiner(ScraperBase):
                         self._robots_crawl_delay = float(
                             line.split(":", 1)[1].strip()
                         )
+                        if self._robots_crawl_delay:
+                            self.delay = max(self.delay, self._robots_crawl_delay)
                     except ValueError:
                         pass
+                if line.lower().startswith("sitemap:"):
+                    loc = line.split(":", 1)[1].strip()
+                    if loc:
+                        self._robots_sitemaps.add(loc)
         except Exception:
             pass
 
@@ -112,10 +187,17 @@ class DiscoveryMiner(ScraperBase):
         sitemap_locs = [
             urljoin(self.base_url, "/robots.txt"),
             urljoin(self.base_url, "/sitemap.xml"),
+            urljoin(self.base_url, "/sitemap.xml.gz"),
             urljoin(self.base_url, "/sitemap_index.xml"),
+            urljoin(self.base_url, "/sitemap-index.xml"),
+            urljoin(self.base_url, "/sitemap_index.xml.gz"),
             urljoin(self.base_url, "/sitemap/sitemap.xml"),
             urljoin(self.base_url, "/post-sitemap.xml"),
+            urljoin(self.base_url, "/post-sitemap.xml.gz"),
             urljoin(self.base_url, "/news-sitemap.xml"),
+            urljoin(self.base_url, "/news-sitemap.xml.gz"),
+            urljoin(self.base_url, "/sitemap-news.xml"),
+            urljoin(self.base_url, "/sitemap-posts.xml"),
             urljoin(self.base_url, "/category-sitemap.xml"),
         ]
 
@@ -132,6 +214,7 @@ class DiscoveryMiner(ScraperBase):
                     sitemap_locs.append(m.strip())
         except Exception:
             pass
+        sitemap_locs.extend(list(self._robots_sitemaps))
 
         for loc in set(sitemap_locs):
             if loc.endswith(".txt") and "robots.txt" not in loc:
@@ -141,7 +224,11 @@ class DiscoveryMiner(ScraperBase):
                 resp = self.session.get(loc, timeout=15)
                 if resp.status_code == 200:
                     ct = resp.headers.get("Content-Type", "").lower()
-                    if "xml" in ct or resp.text.strip().startswith("<?xml"):
+                    if (
+                        "xml" in ct
+                        or resp.text.strip().startswith("<?xml")
+                        or loc.endswith((".xml", ".xml.gz", ".gz"))
+                    ):
                         urls.update(self._parse_xml_sitemap(resp.content, loc))
                     elif "text/plain" in ct:
                         new_urls = {
@@ -164,6 +251,9 @@ class DiscoveryMiner(ScraperBase):
 
         urls: Set[str] = set()
         try:
+            # Handle .gz sitemaps
+            if original_url.endswith(".gz") or content[:2] == b"\x1f\x8b":
+                content = gzip.decompress(content)
             root = ET.fromstring(content)
             # Handle potential namespaces
             ns = ""
@@ -208,17 +298,25 @@ class DiscoveryMiner(ScraperBase):
         )
 
         # Also try common feed paths
-        common_feeds = ["/feed", "/feed/", "/rss", "/rss.xml", "/atom.xml"]
+        common_feeds = [
+            "/feed",
+            "/feed/",
+            "/rss",
+            "/rss.xml",
+            "/rss/",
+            "/atom.xml",
+            "/?feed=rss2",
+            "/?feed=atom",
+        ]
         for path in common_feeds:
             feed_url = urljoin(self.base_url, path)
             try:
                 resp = self.session.get(feed_url, timeout=10)
-                if resp.status_code == 200 and ("xml" in resp.headers.get("Content-Type", "").lower()):
-                    links = re.findall(r"<link>(.*?)<\/link>", resp.text)
-                    for l in links:
-                        l = l.split("]]>")[-1].strip()
-                        if l.startswith("http"):
-                            urls.add(l)
+                if resp.status_code == 200 and (
+                    "xml" in resp.headers.get("Content-Type", "").lower()
+                    or resp.text.strip().startswith("<?xml")
+                ):
+                    urls.update(self._parse_xml_feed(resp.content, feed_url))
             except Exception:
                 pass
 
@@ -231,13 +329,35 @@ class DiscoveryMiner(ScraperBase):
             try:
                 resp = self.session.get(feed_url, timeout=10)
                 if resp.status_code == 200:
-                    links = re.findall(r"<link>(.*?)<\/link>", resp.text)
-                    for l in links:
-                        l = l.split("]]>")[-1].strip()
-                        if l.startswith("http"):
-                            urls.add(l)
+                    urls.update(self._parse_xml_feed(resp.content, feed_url))
             except Exception:
                 pass
+        return urls
+
+    def _parse_xml_feed(self, content: bytes, original_url: str) -> Set[str]:
+        urls: Set[str] = set()
+        try:
+            if original_url.endswith(".gz") or content[:2] == b"\x1f\x8b":
+                content = gzip.decompress(content)
+            root = ET.fromstring(content)
+
+            def _strip_ns(tag: str) -> str:
+                return tag.split("}")[-1]
+
+            for elem in root.iter():
+                tag = _strip_ns(elem.tag)
+                if tag == "link":
+                    href = elem.attrib.get("href") if elem.attrib else None
+                    if href and href.startswith("http"):
+                        urls.add(href.strip())
+                    if elem.text and elem.text.strip().startswith("http"):
+                        urls.add(elem.text.strip())
+                if tag == "guid":
+                    if elem.attrib.get("isPermaLink", "").lower() == "true":
+                        if elem.text and elem.text.strip().startswith("http"):
+                            urls.add(elem.text.strip())
+        except Exception as e:
+            logger.debug(f"Feed parsing error in {original_url}: {e}")
         return urls
 
     # ── Navigation / section discovery ──────────────────────────────────
@@ -252,18 +372,22 @@ class DiscoveryMiner(ScraperBase):
         # Look for links in <nav>, <header>, and common menu containers
         nav_containers = soup.find_all(["nav"]) + soup.select(
             ".menu, .nav, .navigation, #menu, #nav, .main-menu, "
-            ".primary-menu, .header-menu, .navbar"
+            ".primary-menu, .header-menu, .navbar, .top-menu, "
+            ".secondary-menu, .mobile-menu, .site-header, .site-footer"
         )
 
         for container in nav_containers:
             for a in container.find_all("a", href=True):
-                href = urljoin(self.base_url, a["href"]).split("#")[0].rstrip("/")
-                if self._is_internal(href) and href != self.base_url.rstrip("/"):
-                    urls.add(href)
+                href = self._normalize_url(a["href"], self.base_url)
+                if href and self._is_internal(href) and href != self.base_url.rstrip("/"):
+                    if not self._is_static_asset(href):
+                        urls.add(href)
 
         # Also grab section links from the homepage body (listing pages)
         for a in (soup.find_all("a", href=True) if not nav_containers else []):
-            href = urljoin(self.base_url, a["href"]).split("#")[0].rstrip("/")
+            href = self._normalize_url(a["href"], self.base_url)
+            if not href:
+                continue
             path = urlparse(href).path
             # Section pages tend to have short paths like /news/, /sports/
             parts = [p for p in path.split("/") if p]
@@ -279,6 +403,24 @@ class DiscoveryMiner(ScraperBase):
 
         return urls
 
+    def discover_from_homepage_articles(self) -> Set[str]:
+        """Extract recent article links from homepage article blocks."""
+        urls: Set[str] = set()
+        soup = self.fetch_page(self.base_url)
+        if not soup:
+            return urls
+
+        for a in soup.select("article a[href], h1 a[href], h2 a[href], h3 a[href]"):
+            href = self._normalize_url(a.get("href"), self.base_url)
+            if not href or not self._is_internal(href):
+                continue
+            if self._is_static_asset(href):
+                continue
+            if self._is_potential_article(href):
+                urls.add(href)
+
+        return urls
+
     # ── Pagination discovery ────────────────────────────────────────────
 
     def discover_from_pagination(
@@ -286,52 +428,81 @@ class DiscoveryMiner(ScraperBase):
     ) -> Set[str]:
         """Follow pagination patterns on listing/category pages."""
         urls: Set[str] = set()
-
-        # Common pagination patterns
         pagination_patterns = [
             "?page={n}",
-            "?p={n}",
+            "?paged={n}",
             "/page/{n}/",
             "/page/{n}",
-            "?paged={n}",
+            "?p={n}",
         ]
 
         for listing_url in listing_urls:
-            for pattern in pagination_patterns:
-                found_any = False
-                for page_num in range(2, max_pages + 2):
-                    page_url = listing_url.rstrip("/") + pattern.format(n=page_num)
+            seen_pages: Set[str] = set()
+            queue = deque([listing_url])
+            pages_crawled = 0
+            found_any = False
 
-                    try:
-                        resp = self.session.get(page_url, timeout=15)
-                        if resp.status_code != 200:
-                            break  # No more pages
+            while queue and pages_crawled < max_pages:
+                page_url = queue.popleft()
+                page_url = self._normalize_url(page_url)
+                if not page_url or page_url in seen_pages:
+                    continue
+                seen_pages.add(page_url)
+                pages_crawled += 1
 
-                        soup = self.fetch_page(page_url)
-                        if not soup:
+                try:
+                    soup = self.fetch_page(page_url)
+                    if not soup:
+                        continue
+
+                    # Extract article links from this page
+                    urls.update(self._extract_article_links(soup, page_url))
+
+                    # Find next/prev pagination links
+                    for link in soup.select("a[rel=next], link[rel=next]"):
+                        href = link.get("href")
+                        next_url = self._normalize_url(href, page_url)
+                        if next_url and self._is_internal(next_url):
+                            queue.append(next_url)
+                            found_any = True
+
+                    # Common pagination containers
+                    for a in soup.select(
+                        ".pagination a[href], .nav-links a[href], a.page-numbers[href], "
+                        ".pager a[href], .page-navi a[href]"
+                    ):
+                        text = a.get_text(strip=True).lower()
+                        if text.isdigit() or "next" in text or "›" in text or "»" in text:
+                            next_url = self._normalize_url(a.get("href"), page_url)
+                            if next_url and self._is_internal(next_url):
+                                queue.append(next_url)
+                                found_any = True
+                except Exception:
+                    continue
+
+            # Fallback to common patterns if rel=next wasn't found
+            if not found_any:
+                for pattern in pagination_patterns:
+                    for page_num in range(2, max_pages + 2):
+                        page_url = listing_url.rstrip("/") + pattern.format(n=page_num)
+                        page_url = self._normalize_url(page_url)
+                        if not page_url:
+                            continue
+                        try:
+                            resp = self.session.get(page_url, timeout=15)
+                            if resp.status_code != 200:
+                                break
+
+                            soup = self.fetch_page(page_url)
+                            if not soup:
+                                break
+
+                            found = self._extract_article_links(soup, page_url)
+                            if not found:
+                                break
+                            urls.update(found)
+                        except Exception:
                             break
-
-                        # Extract article links from this page
-                        page_found = 0
-                        for a in soup.find_all("a", href=True):
-                            full = (
-                                urljoin(page_url, a["href"]).split("#")[0].rstrip("/")
-                            )
-                            if self._is_internal(full) and self._is_potential_article(
-                                full
-                            ):
-                                urls.add(full)
-                                page_found += 1
-
-                        if page_found == 0:
-                            break  # Empty page, stop pagination
-
-                        found_any = True
-                    except Exception:
-                        break
-
-                if found_any:
-                    break  # Found a working pattern, no need to try others
 
         return urls
 
@@ -367,14 +538,7 @@ class DiscoveryMiner(ScraperBase):
                         continue
 
                     # Extract article links
-                    for a in soup.find_all("a", href=True):
-                        full = (
-                            urljoin(archive_url, a["href"])
-                            .split("#")[0]
-                            .rstrip("/")
-                        )
-                        if self._is_internal(full) and self._is_potential_article(full):
-                            urls.add(full)
+                    urls.update(self._extract_article_links(soup, archive_url))
                 except Exception:
                     continue
 
@@ -453,6 +617,51 @@ class DiscoveryMiner(ScraperBase):
             urls.add(urljoin(self.base_url, p))
         return urls
 
+    # ── URL Tree discovery ──────────────────────────────────────────────
+
+    def discover_from_url_tree(self, seed_urls: Set[str], max_prefixes: int = 50) -> Set[str]:
+        """Derive listing pages from URL path prefixes of already discovered URLs."""
+        prefixes: Counter[str] = Counter()
+        for url in seed_urls:
+            if not url:
+                continue
+            if not self._is_internal(url):
+                continue
+            path = urlparse(url).path
+            parts = [p for p in path.split("/") if p]
+            if not parts:
+                continue
+
+            # Category-like prefixes
+            if len(parts) >= 1 and not parts[0].isdigit():
+                prefixes[f"/{parts[0]}/"] += 1
+            if len(parts) >= 2 and parts[0] in {
+                "category",
+                "news",
+                "story",
+                "content",
+                "post",
+                "article",
+                "detail",
+                "details",
+            }:
+                prefixes[f"/{parts[0]}/{parts[1]}/"] += 1
+
+            # Date-based prefixes
+            if len(parts) >= 3 and re.match(r"20\\d{2}", parts[0]) and parts[1].isdigit():
+                prefixes[f"/{parts[0]}/{parts[1]}/"] += 1
+
+        candidates = [p for p, c in prefixes.most_common(max_prefixes) if c >= 3]
+        urls: Set[str] = set()
+        for prefix in candidates:
+            listing_url = urljoin(self.base_url, prefix)
+            soup = self.fetch_page(listing_url)
+            if not soup:
+                continue
+            urls.update(self._extract_article_links(soup, listing_url))
+
+        return urls
+
     # ── BFS crawl ───────────────────────────────────────────────────────
 
     def crawl_internal_links(self, max_pages: int = 200) -> Set[str]:
@@ -478,17 +687,75 @@ class DiscoveryMiner(ScraperBase):
                 continue
 
             for link in soup.find_all("a", href=True):
-                full_url = urljoin(url, link["href"]).split("#")[0].rstrip("/")
+                full_url = self._normalize_url(link["href"], url)
+                if not full_url:
+                    continue
                 if self._is_internal(full_url) and full_url not in visited:
                     if self._is_potential_article(full_url):
                         discovered.add(full_url)
-
                     if full_url not in visited and full_url not in to_visit:
                         to_visit.append(full_url)
 
         return discovered
 
     # ── Helpers ──────────────────────────────────────────────────────────
+
+    def _normalize_url(self, url: str, base: Optional[str] = None) -> Optional[str]:
+        if not url:
+            return None
+        if url.startswith("mailto:") or url.startswith("javascript:"):
+            return None
+
+        full = urljoin(base or self.base_url, url)
+        parsed = urlparse(full)
+        if parsed.scheme not in ("http", "https"):
+            return None
+
+        # Clean query parameters (keep only non-tracking)
+        query_pairs = parse_qsl(parsed.query, keep_blank_values=False)
+        filtered_pairs = [
+            (k, v) for k, v in query_pairs if k.lower() not in self._tracking_params
+        ]
+        query = urlencode(filtered_pairs, doseq=True)
+
+        # Normalize path
+        path = re.sub(r"/amp/?$", "", parsed.path, flags=re.IGNORECASE)
+        path = re.sub(r"//+", "/", path)
+        if path != "/" and path.endswith("/"):
+            path = path.rstrip("/")
+
+        normalized = parsed._replace(
+            netloc=parsed.netloc.lower(),
+            path=path,
+            query=query,
+            fragment="",
+        )
+        return urlunparse(normalized)
+
+    def _is_static_asset(self, url: str) -> bool:
+        path = urlparse(url).path.lower()
+        return any(path.endswith(ext) for ext in self._static_exts)
+
+    def _extract_article_links(self, soup, base_url: str) -> Set[str]:
+        urls: Set[str] = set()
+        # Prioritize links inside likely article containers
+        link_nodes = soup.select("article a[href], h1 a[href], h2 a[href], h3 a[href]")
+        if not link_nodes:
+            link_nodes = soup.find_all("a", href=True)
+
+        for link in link_nodes:
+            href = link.get("href")
+            full = self._normalize_url(href, base_url)
+            if not full:
+                continue
+            if not self._is_internal(full):
+                continue
+            if self._is_static_asset(full):
+                continue
+            if self._is_potential_article(full):
+                urls.add(full)
+
+        return urls
 
     def _is_internal(self, url: str) -> bool:
         """Check if URL belongs to the base domain."""
@@ -498,7 +765,8 @@ class DiscoveryMiner(ScraperBase):
 
     def _is_potential_article(self, url: str) -> bool:
         """Heuristic to identify article URLs vs navigation links."""
-        path = urlparse(url).path.lower()
+        parsed = urlparse(url)
+        path = parsed.path.lower()
         if not path or path == "/":
             return False
 
@@ -526,14 +794,35 @@ class DiscoveryMiner(ScraperBase):
         if any(b in path for b in blacklist):
             return False
 
+        if self._is_static_asset(url):
+            return False
+
+        # Query-based article IDs (?p=123, ?id=123)
+        query_pairs = parse_qsl(parsed.query, keep_blank_values=False)
+        for k, v in query_pairs:
+            if k.lower() in self._article_query_keys and re.search(r"\d{2,}", v):
+                return True
+            if k.lower() in {"page", "paged"}:
+                return False
+
         # Article URLs often have IDs or long descriptive slugs
         parts = [p for p in path.split("/") if p]
         if not parts:
             return False
 
         last_part = parts[-1]
+        # Common file-based article extensions
+        if last_part.endswith((".html", ".htm", ".php", ".aspx", ".jsp")):
+            return True
+
+        # Date-based paths: /YYYY/MM/DD/slug or /YYYY/MM/slug
+        if re.search(r"/(19|20)\d{2}/\d{1,2}/\d{1,2}/", path):
+            return True
+        if re.search(r"/(19|20)\d{2}/\d{1,2}/", path) and len(parts) >= 3:
+            return True
+
         # Has an ID (digits) or is a long slug
-        if re.search(r"\d{4,}", last_part) or len(last_part) > 20:
+        if re.search(r"\d{4,}", last_part) or (len(last_part) > 16 and "-" in last_part):
             return True
 
         # Many Nepali news sites use /news/ID or /content/ID
@@ -545,7 +834,8 @@ class DiscoveryMiner(ScraperBase):
             "detail",
             "story",
         ]:
-            return True
+            if re.search(r"\d{2,}", last_part) or len(last_part) > 8:
+                return True
 
         # URL has ≥3 path segments (common for articles: /category/date/slug)
         if len(parts) >= 3:
@@ -590,5 +880,10 @@ class DiscoveryMiner(ScraperBase):
                 "artha",
             }
             return any(p in listing_segments for p in parts)
+
+        # Query-based pagination
+        query = urlparse(url).query.lower()
+        if "page=" in query or "paged=" in query:
+            return True
 
         return False
