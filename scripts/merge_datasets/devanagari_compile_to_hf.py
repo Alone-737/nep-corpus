@@ -224,6 +224,17 @@ def main() -> None:
         action="store_true",
         help="Download full split to cache before iterating",
     )
+    parser.add_argument(
+        "--require-empty",
+        action="store_true",
+        help="Fail if target repo already has shards (safety guard).",
+    )
+    parser.add_argument(
+        "--min-start-index",
+        type=int,
+        default=0,
+        help="Fail if computed starting shard index is <= this value.",
+    )
     args = parser.parse_args()
 
     token = get_token() or os.getenv("HF_TOKEN")
@@ -250,8 +261,19 @@ def main() -> None:
                 if line:
                     done.add(line)
 
-    shard_index = get_max_shard_index(args.target_repo, token) + 1
+    max_existing = get_max_shard_index(api, args.target_repo)
+    shard_index = max_existing + 1
+    logger.info("Existing max shard index: %s", max_existing)
     logger.info("Starting shard index: %s", shard_index)
+
+    if args.require_empty and max_existing > 0:
+        raise SystemExit(
+            f"Refusing to run: target repo has shards (max index {max_existing})."
+        )
+    if shard_index <= args.min_start_index:
+        raise SystemExit(
+            f"Refusing to run: starting shard index {shard_index} <= {args.min_start_index}."
+        )
 
     only = set(parse_list(args.only)) if args.only else None
     exclude = set(parse_list(args.exclude)) if args.exclude else None
