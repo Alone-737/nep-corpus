@@ -137,12 +137,12 @@ def _iter_work_plan_from_config(
     *,
     only: Optional[set[str]],
     exclude: Optional[set[str]],
-) -> List[Tuple[str, str, str, str]]:
+) -> List[Tuple[str, str, str, str, Dict[str, Any]]]:
     datasets = cfg.get("datasets", [])
     if not isinstance(datasets, list):
         raise ValueError("Config 'datasets' must be a list")
 
-    work_plan: List[Tuple[str, str, str, str]] = []
+    work_plan: List[Tuple[str, str, str, str, Dict[str, Any]]] = []
     for entry in datasets:
         if not isinstance(entry, dict):
             continue
@@ -163,22 +163,27 @@ def _iter_work_plan_from_config(
         configs = entry.get("configs") or []
         splits = entry.get("splits") or ["train"]
         kind = entry.get("kind") or "generic"
+        filters = entry.get("filters") or {}
+        if not isinstance(filters, dict):
+            filters = {}
 
         for config in configs:
             for split in splits:
-                work_plan.append((repo_id, config, split, kind))
+                work_plan.append((repo_id, config, split, kind, filters))
 
     return work_plan
 
 
-def _iter_work_plan_from_args(args: argparse.Namespace) -> List[Tuple[str, str, str, str]]:
-    work_plan: List[Tuple[str, str, str, str]] = []
+def _iter_work_plan_from_args(
+    args: argparse.Namespace,
+) -> List[Tuple[str, str, str, str, Dict[str, Any]]]:
+    work_plan: List[Tuple[str, str, str, str, Dict[str, Any]]] = []
     for cfg in parse_list(args.hplt_configs):
         for split in parse_list(args.hplt_splits):
-            work_plan.append((args.hplt_repo, cfg, split, "hplt"))
+            work_plan.append((args.hplt_repo, cfg, split, "hplt", {}))
     for cfg in parse_list(args.c4_configs):
         for split in parse_list(args.c4_splits):
-            work_plan.append((args.c4_repo, cfg, split, "c4"))
+            work_plan.append((args.c4_repo, cfg, split, "c4", {}))
     return work_plan
 
 
@@ -279,7 +284,7 @@ def main() -> None:
     exclude = set(parse_list(args.exclude)) if args.exclude else None
 
     config_path = Path(args.config) if args.config else None
-    work_plan: List[Tuple[str, str, str, str]]
+    work_plan: List[Tuple[str, str, str, str, Dict[str, Any]]]
     if config_path and config_path.exists():
         cfg = load_config(config_path)
         work_plan = _iter_work_plan_from_config(cfg, only=only, exclude=exclude)
@@ -289,7 +294,7 @@ def main() -> None:
     else:
         work_plan = _iter_work_plan_from_args(args)
 
-    for repo_id, config, split, kind in work_plan:
+    for repo_id, config, split, kind, filters in work_plan:
         source_key = make_source_key(repo_id, config, split)
         if source_key in done:
             logger.info("Skipping completed: %s", source_key)
@@ -308,6 +313,16 @@ def main() -> None:
             text_norm = normalize_text(text_raw)
             if not text_norm:
                 continue
+
+            if filters:
+                row_source = row.get("source")
+                source_include = filters.get("source_include")
+                source_exclude = filters.get("source_exclude")
+                if source_include:
+                    if row_source is None or row_source not in source_include:
+                        continue
+                if source_exclude and row_source in source_exclude:
+                    continue
 
             if kind == "hplt" or repo_id == args.hplt_repo:
                 lang = row.get("lang") or config

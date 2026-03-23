@@ -28,6 +28,23 @@ datasets:
     splits:
       - train
 
+  - name: culturax_deva
+    repo: uonlp/CulturaX
+    kind: culturax
+    enabled: true
+    configs:
+      - bh
+      - gom
+      - hi
+      - mai
+      - new
+      - sa
+    splits:
+      - train
+    filters:
+      source_exclude:
+        - mC4
+
 #  - name: wikipedia_nepali_deva
 #    repo: wikimedia/wikipedia
 #    kind: wikipedia
