@@ -1,0 +1,14 @@
+/home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/deps/pyo3_build_config-e2ad5dd93fd8b8ba.d: /home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/lib.rs /home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/errors.rs /home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/impl_.rs /home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/build/pyo3-build-config-887fb8f0178c3def/out/pyo3-build-config-file.txt /home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/build/pyo3-build-config-887fb8f0178c3def/out/pyo3-build-config.txt
+
+/home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/deps/libpyo3_build_config-e2ad5dd93fd8b8ba.rlib: /home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/lib.rs /home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/errors.rs /home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/impl_.rs /home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/build/pyo3-build-config-887fb8f0178c3def/out/pyo3-build-config-file.txt /home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/build/pyo3-build-config-887fb8f0178c3def/out/pyo3-build-config.txt
+
+/home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/deps/libpyo3_build_config-e2ad5dd93fd8b8ba.rmeta: /home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/lib.rs /home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/errors.rs /home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/impl_.rs /home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/build/pyo3-build-config-887fb8f0178c3def/out/pyo3-build-config-file.txt /home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/build/pyo3-build-config-887fb8f0178c3def/out/pyo3-build-config.txt
+
+/home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/lib.rs:
+/home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/errors.rs:
+/home/alone/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.21.2/src/impl_.rs:
+/home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/build/pyo3-build-config-887fb8f0178c3def/out/pyo3-build-config-file.txt:
+/home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/build/pyo3-build-config-887fb8f0178c3def/out/pyo3-build-config.txt:
+
+# env-dep:CARGO_PKG_VERSION=0.21.2
+# env-dep:OUT_DIR=/home/alone/somethingtodoewith/nep-corpus/rust/url_dedup/target/debug/build/pyo3-build-config-887fb8f0178c3def/out

@@ -14,11 +14,12 @@ Primary use case: building high-quality corpora for LLM pretraining and SFT.
 
 ## Performance
 
-Recent improvements:
-- **100x faster database** — Save many records at once instead of one by one
-- **5.2x faster tracking** — Use simple counter instead of scanning whole array
-- **10.5M URLs per second** — Fast URL checking with Rust
-- **4 records per second enrichment** — With 10 workers fetching and extracting text
+Recent improvements (benchmarked):
+- **99x faster database** — Batch operations reduce 300 queries to 3 (3.24ms vs 320.52ms)
+- **5.5x faster tracking** — Atomic counter vs O(n²) scan (16.58ms vs 91.71ms)
+- **2.3x faster normalization** — Parallel processing with ProcessPool (278.25ms vs 646.97ms)
+- **Rust URL dedup** — Fast URL checking with BLAKE3 hashing (no GIL under concurrent load)
+- **Reliable resume and concurrency control** — Improved run stability and parallel execution
 
 ## Source Coverage
 

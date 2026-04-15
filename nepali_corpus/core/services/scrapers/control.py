@@ -852,11 +852,11 @@ class ScrapeCoordinator:
             writer.flush()
             writer.close()
 
+        await self._drain_enrichment_tasks()
+
         # --- Enrichment Phase (for any items that need it) ---
         if not self._stop_event.is_set():
             await self._run_enrichment(session, output_path, gzip_output, workers)
-
-        await self._drain_enrichment_tasks()
 
         await self._finalize_run(session)
         self._cleanup_file_logging()
@@ -1071,16 +1071,18 @@ class ScrapeCoordinator:
 
         if new_records:
             try:
+                await session.store_raw_records(new_records)
+            except Exception as exc:
+                logger.error("Batch store_raw_records failed: %s", exc)
+                return
+
+            # Mark URLs as visited only after successful DB write
+            try:
                 new_urls = [r.url for r in new_records]
                 await session.mark_urls_batch(new_urls)
             except AttributeError:
                 for u in new_urls:
                     await session.mark_url(u)
-
-            try:
-                await session.store_raw_records(new_records)
-            except Exception as exc:
-                logger.error("Batch store_raw_records failed: %s", exc)
 
             for record in new_records:
                 writer.write(record)
@@ -1113,7 +1115,7 @@ class ScrapeCoordinator:
                     cache_dir=self._cache_dir,
                     ocr_enabled=self._ocr_enabled,
                     pdf_enabled=self._pdf_enabled,
-                    max_workers=self._enrichment_workers
+                    max_workers=1
                 )
             )
             
