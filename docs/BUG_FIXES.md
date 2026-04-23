@@ -29,32 +29,27 @@
 
 **The Fix:** Rearchitected `_process_immediate_enrichment`. We handed the `JsonlWriter` directly to the background extraction threads. Now, as the scraper pulls articles from the internet, it directly writes the fully enriched texts into the `.jsonl` file in real-time.
 
-### 4. No More Ctrl+C Data Loss
-**The Problem:** Pressing Ctrl+C to gracefully stop the scraper would unintentionally skip the final database/file saving block, erasing whatever the scraper was currently working on.
-
-**The Fix:** Overrode the `is_set()` blocking flag. Even if you send a kill signal, the script will patiently pause, wait for the background queue to finish extracting text, safely save the final `raw.jsonl` lines, and then cleanly shut down.
-
-### 5. Eliminated Silent Enrichment Aborts & Transient Errors
+### 4. Eliminated Silent Enrichment Aborts & Transient Errors
 **The Problem:** Previously, if a *single* URL failed a database insertion, or a single thread timed out, the entire batch of 50 documents would be silently discarded. Minor DB errors were stopping pipelines.
 
 **The Fix:** Overhauled the error handling logic to be **fail-soft**. Records are now processed iteratively, and `control.py` will catch and log individual timeouts rather than dumping the whole batch. Database operations now safely ignore single-record errors (like unique constraint violations) and continue processing.
 
-### 6. Prevented Counter State Overwrites
+### 5. Prevented Counter State Overwrites
 **The Problem:** The `docs_saved` state was being overwritten (`=`) instead of accumulated (`+=`), causing the final run summaries to report inaccurate numbers.
 
 **The Fix:** The metrics tracking variables were successfully patched to be additive counters, providing perfectly accurate summary logs.
 
-### 7. Fixed Async Task Discovery Races
+### 6. Fixed Async Task Discovery Races
 **The Problem:** Async discovery jobs on large domains were sometimes left hanging or were not cleanly awaited before the scraper closed its JSON streams, leading to partial data loss of freshly discovered URLs.
 
 **The Fix:** Added an explicit `_discovery_futures` array tracker and bounding lock to ensure all async background discovery tasks are cleanly awaited and fully extracted before gracefully exiting the run loop.
 
-### 8. Missing PDF Parsing Flags
+### 7. Missing PDF Parsing Flags
 **The Problem:** PDF text extraction features were incorrectly disabled in the post-run phase because the boolean tags weren't systematically propagated from the CLI.
 
 **The Fix:** The flag variables (`ocr_enabled`, `pdf_enabled`) are now correctly handed down the function chain ensuring PDF document content isn't dropped during enrichment.
 
-### 9. Code Cleanup
+### 8. Code Cleanup
 **The Action:** Stripped out dozens of noisy boilerplate block comments (e.g., `# --- Gov Category ---`) and messy debug traces recently added to `control.py` to ensure the codebase remains clean and professional.
 
 ## April 22, 2026
