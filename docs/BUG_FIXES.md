@@ -81,10 +81,4 @@
 **The Problem:** The `update_pipeline_run` and `update_pipeline_job` endpoints relied on basic string checks for database column updates.
 **The Fix:** Locked down all dynamic SQL query generation by asserting column names against strict whitelist `frozenset` objects and verifying them via strict identifier regex guards.
 
-### 7. Massive Rust Performance Uplift (v0.2.0)
-**The Problem:** Native Python string operations, looping, and regex matching were severely bottlenecking the pipeline's overall HTML extraction speed.
-**The Fix:** 
-- Upgraded the `rust_url_dedup` engine to v0.2.0, introducing Rayon-powered multithreading and `aho-corasick` automata for massive batch operations.
-- Replaced sequential Python text cleaning, HTML boilerplate stripping, NFC normalization, and `devanagari_ratio` counting with high-performance $O(N)$ native Rust FFI calls.
-- Upgraded the core hashing algorithm from MD5 to BLAKE3 for drastically faster deduplication key generation.
-- Empty content checks now execute inside the DB storage layer directly, bypassing full object instantiations to save Python overhead.
+

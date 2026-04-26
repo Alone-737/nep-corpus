@@ -88,11 +88,9 @@ BOILERPLATE_SELECTORS = [
     ".newsletter-signup", ".popup", ".modal", ".overlay",
 ]
 
-
 def _cache_path(cache_dir: str, url: str, ext: str = ".html") -> str:
     h = hashlib.md5(url.encode("utf-8")).hexdigest()
     return os.path.join(cache_dir, f"{h}{ext}")
-
 
 def fetch_content(url: str, cache_dir: str, timeout: int = 30, delay: float = 0.5) -> Tuple[Optional[bytes], str]:
     """Fetches url content and returns (bytes, content_type). Downloads PDFs and HTML."""
@@ -152,7 +150,6 @@ def fetch_content(url: str, cache_dir: str, timeout: int = 30, delay: float = 0.
         logger.warning(f"Failed to fetch {url}: {e}")
         return None, ""
 
-
 def _detect_encoding(data: bytes) -> str:
     """Detect encoding using charset-normalizer if available, fallback to utf-8."""
     try:
@@ -165,7 +162,6 @@ def _detect_encoding(data: bytes) -> str:
     except Exception:
         pass
     return "utf-8"
-
 
 def extract_text(
     data: bytes,
@@ -241,17 +237,6 @@ def extract_text(
             html = data.decode("utf-8", errors="ignore")
 
     extracted_text = ""
-
-    # Strategy 0: Try Rust extractor first
-    try:
-        from rust_url_dedup import extract_text as rust_extract
-        rust_text = rust_extract(html)
-        if len(rust_text) > 400:
-             # Fast Devanagari ratio check to ensure it's not gibberish
-             if devanagari_ratio(rust_text) > 0.35:
-                 return clean_extracted_text(rust_text).strip()
-    except Exception as e:
-        logger.debug(f"Rust extraction failed: {e}")
 
     # Fallback to trafilatura
     trafilatura_text: Optional[str] = None
@@ -345,8 +330,7 @@ def extract_text(
                 extracted_text = "\n".join(paragraphs)
         except Exception:
             pass
-            
-    # --- Quality check for Fallback Strategies ---
+
     # We clean the text now to see if we actually have content or just boilerplate
     cleaned_so_far = clean_extracted_text(extracted_text)
     
@@ -375,7 +359,6 @@ def extract_text(
             extracted_text = pdf_text
             cleaned_so_far = clean_extracted_text(extracted_text)
 
-    # --- Strategy 7: Multi-Extractor Voting (The Broad Fix) ---
     # Combine results from different extractors and choose the one with the best "quality score"
     candidates = []
     
@@ -437,7 +420,6 @@ def extract_text(
     # Final post-processing
     return clean_extracted_text(extracted_text).strip()
 
-
 def _try_ocr_images(html: str, base_url: str) -> str:
     """Fallback OCR: If the page just contains a scanned image, try to extract its text."""
     try:
@@ -492,7 +474,6 @@ def _try_ocr_images(html: str, base_url: str) -> str:
     except Exception as e:
         logger.debug(f"OCR overall failure: {e}")
         return ""
-
 
 def _try_embedded_pdfs(html: str, base_url: str) -> str:
     """Fallback: Look for embedded PDF iframes or download links."""

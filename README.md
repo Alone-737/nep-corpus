@@ -74,21 +74,7 @@ Validate DB connection:
 python scripts/test_db_conn.py
 ```
 
-### 4. Optional Rust Accelerator (Recommended)
 
-- `extract_text()` — HTML to text extraction (3.1x speedup)
-- `detect_language()` — Nepali vs English detection (261K calls/sec)
-- `devanagari_ratio()` — Devanagari character ratio check
-- `clean_content()` — Text normalization + cleaning
-- `batch_*` operations — Parallel processing with Rayon (20+ CPU cores)
-- `UrlSet` — BLAKE3-based URL dedup (O(1) lookup)
-
-```bash
-pip install maturin
-maturin develop --manifest-path rust/url_dedup/Cargo.toml
-```
-
-This is optional but recommended before production runs. If not available, the pipeline still works fine.
 
 ## First Run (Small Smoke Test)
 

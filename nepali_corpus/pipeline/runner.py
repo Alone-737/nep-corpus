@@ -116,7 +116,6 @@ def ingest_sources(
         )
     )
 
-
 def save_raw_jsonl(records: Iterable[RawRecord], path: str, gzip_output: bool = False) -> int:
     path = maybe_gzip_path(path, gzip_output)
     ensure_parent_dir(path)
@@ -127,7 +126,6 @@ def save_raw_jsonl(records: Iterable[RawRecord], path: str, gzip_output: bool = 
             count += 1
     return count
 
-
 def load_raw_jsonl(path: str) -> List[RawRecord]:
     records: List[RawRecord] = []
     with open_text(path, "rt") as f:
@@ -136,7 +134,6 @@ def load_raw_jsonl(path: str) -> List[RawRecord]:
                 continue
             records.append(RawRecord(**json.loads(line)))
     return records
-
 
 def save_normalized_jsonl(
     docs: Iterable[NormalizedDocument],
@@ -152,7 +149,6 @@ def save_normalized_jsonl(
             count += 1
     return count
 
-
 def load_normalized_jsonl(path: str) -> List[NormalizedDocument]:
     docs: List[NormalizedDocument] = []
     with open_text(path, "rt") as f:
@@ -162,9 +158,7 @@ def load_normalized_jsonl(path: str) -> List[NormalizedDocument]:
             docs.append(NormalizedDocument(**json.loads(line)))
     return docs
 
-
 logger = logging.getLogger(__name__)
-
 
 def enrich_records(
     records: Iterable[RawRecord],
@@ -219,36 +213,30 @@ def enrich_records(
     logger.info("Enrichment done: %d records in %.2fs (%.1f rec/s)", total, elapsed, total / max(elapsed, 0.001))
     return enriched
 
-
 def normalize_and_filter(
     enriched_records: Iterable[Tuple[RawRecord, Optional[str]]],
     min_chars: int = 200,
     nepali_ratio: float = 0.4,
     workers: int = 8,
 ) -> List[NormalizedDocument]:
-    from ..core.utils.normalize import batch_normalize_records, _HAS_RUST
-
     pairs = list(enriched_records)
     t0 = time.perf_counter()
 
-    if _HAS_RUST:
-        docs = batch_normalize_records(pairs, min_chars=min_chars, min_devanagari=nepali_ratio)
-    else:
-        def _process(pair):
-            rec, extracted = pair
-            doc = normalize_record(rec, enriched_text=extracted)
-            if not doc:
-                return None
-            doc.text = clean_text(doc.text)
-            if not min_length(doc, min_chars=min_chars):
-                return None
-            if not is_nepali(doc, min_ratio=nepali_ratio):
-                return None
-            return doc
+    def _process(pair):
+        rec, extracted = pair
+        doc = normalize_record(rec, enriched_text=extracted)
+        if not doc:
+            return None
+        doc.text = clean_text(doc.text)
+        if not min_length(doc, min_chars=min_chars):
+            return None
+        if not is_nepali(doc, min_ratio=nepali_ratio):
+            return None
+        return doc
 
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            results = list(executor.map(_process, pairs))
-        docs = [d for d in results if d is not None]
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        results = list(executor.map(_process, pairs))
+    docs = [d for d in results if d is not None]
 
     elapsed = time.perf_counter() - t0
     logger.info(
@@ -256,7 +244,6 @@ def normalize_and_filter(
         len(pairs), len(docs), elapsed, len(pairs) / max(elapsed, 0.001),
     )
     return docs
-
 
 def to_training_docs(docs: Iterable[NormalizedDocument]) -> List[TrainingDocument]:
     training: List[TrainingDocument] = []
@@ -278,7 +265,6 @@ def to_training_docs(docs: Iterable[NormalizedDocument]) -> List[TrainingDocumen
             )
         )
     return training
-
 
 def run_pipeline(
     raw_out: str,
