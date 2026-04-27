@@ -116,7 +116,6 @@ def ingest_sources(
         )
     )
 
-
 def save_raw_jsonl(records: Iterable[RawRecord], path: str, gzip_output: bool = False) -> int:
     path = maybe_gzip_path(path, gzip_output)
     ensure_parent_dir(path)
@@ -127,7 +126,6 @@ def save_raw_jsonl(records: Iterable[RawRecord], path: str, gzip_output: bool = 
             count += 1
     return count
 
-
 def load_raw_jsonl(path: str) -> List[RawRecord]:
     records: List[RawRecord] = []
     with open_text(path, "rt") as f:
@@ -136,7 +134,6 @@ def load_raw_jsonl(path: str) -> List[RawRecord]:
                 continue
             records.append(RawRecord(**json.loads(line)))
     return records
-
 
 def save_normalized_jsonl(
     docs: Iterable[NormalizedDocument],
@@ -152,7 +149,6 @@ def save_normalized_jsonl(
             count += 1
     return count
 
-
 def load_normalized_jsonl(path: str) -> List[NormalizedDocument]:
     docs: List[NormalizedDocument] = []
     with open_text(path, "rt") as f:
@@ -162,15 +158,13 @@ def load_normalized_jsonl(path: str) -> List[NormalizedDocument]:
             docs.append(NormalizedDocument(**json.loads(line)))
     return docs
 
-
 logger = logging.getLogger(__name__)
-
 
 def enrich_records(
     records: Iterable[RawRecord],
     cache_dir: str,
-    min_enrich_len: int = 1000,
-    max_workers: int = 10,
+    min_enrich_len: int = 0,
+    max_workers: int = 20,
     ocr_enabled: bool = True,
     pdf_enabled: bool = True,
 ) -> List[Tuple[RawRecord, Optional[str]]]:
@@ -185,7 +179,7 @@ def enrich_records(
 
     def _enrich_one(index: int, rec: RawRecord):
         text = rec.content or rec.summary or ""
-        if len(text) >= min_enrich_len:
+        if min_enrich_len > 0 and len(text) >= min_enrich_len:
             enriched[index] = (rec, None)
         else:
             try:
@@ -219,7 +213,6 @@ def enrich_records(
     logger.info("Enrichment done: %d records in %.2fs (%.1f rec/s)", total, elapsed, total / max(elapsed, 0.001))
     return enriched
 
-
 def normalize_and_filter(
     enriched_records: Iterable[Tuple[RawRecord, Optional[str]]],
     min_chars: int = 200,
@@ -243,15 +236,14 @@ def normalize_and_filter(
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         results = list(executor.map(_process, pairs))
-
     docs = [d for d in results if d is not None]
+
     elapsed = time.perf_counter() - t0
     logger.info(
         "normalize_and_filter: %d in, %d passed, %.2fs (%.1f rec/s)",
         len(pairs), len(docs), elapsed, len(pairs) / max(elapsed, 0.001),
     )
     return docs
-
 
 def to_training_docs(docs: Iterable[NormalizedDocument]) -> List[TrainingDocument]:
     training: List[TrainingDocument] = []
@@ -273,7 +265,6 @@ def to_training_docs(docs: Iterable[NormalizedDocument]) -> List[TrainingDocumen
             )
         )
     return training
-
 
 def run_pipeline(
     raw_out: str,
