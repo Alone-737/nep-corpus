@@ -911,6 +911,7 @@ class ScrapeCoordinator:
         )
 
         writer = JsonlWriter(output_path, gzip_output=gzip_output, append=True)
+        self._writer = writer
         try:
             await self._execute_jobs(
                 jobs=jobs,
@@ -920,17 +921,26 @@ class ScrapeCoordinator:
                 pdf_enabled=pdf_enabled,
                 pdf_output_dir=pdf_output_dir,
             )
+            # Ensure discovery futures enqueueing _handle_results are fully drained
+            # before we flush/close writer.
+            await asyncio.sleep(0)
+            for fut in self._discovery_futures:
+                try:
+                    await asyncio.wrap_future(fut)
+                except Exception as e:
+                    logger.warning("Discovery batch coroutine failed: %s", e)
+            self._discovery_futures.clear()
+            # Match the normal run path so buffered records are not stranded on resume.
+            await self._maybe_flush_enrichment(session, force=True)
+            await self._drain_enrichment_tasks()
+
+            # --- Enrichment Phase (for any items that need it) ---
+            if not self._stop_event.is_set():
+                await self._run_enrichment(session, output_path, gzip_output, workers)
         finally:
             writer.flush()
             writer.close()
-
-        # Match the normal run path so buffered records are not stranded on resume.
-        await self._maybe_flush_enrichment(session, force=True)
-        await self._drain_enrichment_tasks()
-
-        # --- Enrichment Phase (for any items that need it) ---
-        if not self._stop_event.is_set():
-            await self._run_enrichment(session, output_path, gzip_output, workers)
+            self._writer = None
 
         if self._enrichment_flush_task:
             self._enrichment_flush_task.cancel()
@@ -1159,8 +1169,8 @@ class ScrapeCoordinator:
             new_records.append(record)
             new_urls.append(record.url)
 
+        stored_ok = False
         if new_records:
-            stored_ok = False
             try:
                 await session.store_raw_records(new_records)
                 stored_ok = True
@@ -1176,11 +1186,11 @@ class ScrapeCoordinator:
                 for url in new_urls:
                     self._visited_urls.add(url)
 
-            for record in new_records:
-                self.state.record_source(record.source_id, saved=1)
+                for record in new_records:
+                    self.state.record_source(record.source_id, saved=1)
 
         self.state.urls_crawled += len(records)
-        self.state.docs_saved += len(new_records)
+        self.state.docs_saved += len(new_records) if stored_ok else 0
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         rps = len(records) / max((time.perf_counter() - t0), 0.001)
