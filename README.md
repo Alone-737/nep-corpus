@@ -85,7 +85,8 @@ python scripts/corpus_cli.py coordinator \
   --categories News \
   --workers 1 \
   --max-pages 1 \
-  --num-sources 1
+  --num-sources 1 \
+  --pdf
 ```
 
 If this succeeds, scale workers/pages gradually.

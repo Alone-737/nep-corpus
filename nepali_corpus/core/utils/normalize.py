@@ -8,15 +8,21 @@ from typing import List, Optional, Tuple
 from ..models import NormalizedDocument, RawRecord
 
 _DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
+_INLINE_SPACE_RE = re.compile(r"[ \t]+")
+_SINGLE_NL_RE = re.compile(r"(?<!\n)\n(?!\n)")
+_PARA_BREAK_RE = re.compile(r"\n{3,}")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 def normalize_text(text: str) -> str:
     if not text:
         return ""
     text = unicodedata.normalize("NFC", text)
-    text = re.sub(r"\u200b", "", text)  # zero-width space
-    text = _WHITESPACE_RE.sub(" ", text).strip()
-    return text
+    text = re.sub(r"\u200b", "", text)
+    text = _INLINE_SPACE_RE.sub(" ", text)
+    text = _SINGLE_NL_RE.sub(" ", text)
+    text = _PARA_BREAK_RE.sub("\n\n", text)
+    return text.strip()
+
 
 def devanagari_ratio(text: str) -> float:
     if not text:
@@ -27,12 +33,15 @@ def devanagari_ratio(text: str) -> float:
     matches = len(_DEVANAGARI_RE.findall(text))
     return matches / alpha
 
+
 def detect_nepali(text: str, min_ratio: float = 0.4) -> bool:
     return devanagari_ratio(text) >= min_ratio
+
 
 def make_doc_id(source_id: str, url: str) -> str:
     raw = f"{source_id}:{url}".encode("utf-8")
     return hashlib.md5(raw).hexdigest()
+
 
 def make_dedup_key(text: str) -> str:
     norm = normalize_text(text).lower()
@@ -40,11 +49,13 @@ def make_dedup_key(text: str) -> str:
     norm = _WHITESPACE_RE.sub(" ", norm).strip()
     return hashlib.md5(norm.encode("utf-8")).hexdigest()
 
+
 def pick_best_text(record: RawRecord, enriched_text: Optional[str] = None) -> str:
     for candidate in [enriched_text, record.content, record.summary, record.title]:
         if candidate and candidate.strip():
             return candidate
     return ""
+
 
 def normalize_record(
     record: RawRecord,
@@ -78,6 +89,7 @@ def normalize_record(
         raw_meta=record.raw_meta,
     )
     return doc
+
 
 def batch_normalize_records(
     pairs: List[Tuple[RawRecord, Optional[str]]],

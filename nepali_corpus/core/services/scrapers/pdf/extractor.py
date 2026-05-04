@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -10,21 +10,17 @@ from typing import Iterable, List, Optional
 import aiohttp
 from pydantic import ConfigDict
 
-from .utils import HAS_PYMUPDF, _extract_text_from_pdf
+from .utils import HAS_PYMUPDF, _extract_pdf_metadata, _extract_text_from_pdf
 
 from nepali_corpus.core.models import RawRecord
 from nepali_corpus.core.models.base import CorpusEntity
 from nepali_corpus.core.utils.cleaning import clean_text
 from nepali_corpus.core.utils.normalize import detect_nepali
 
+logger = logging.getLogger(__name__)
+
 
 class PdfJob(CorpusEntity):
-    """A PDF download & extraction job.
-
-    Inherits from:
-        CorpusEntity – source_id, source_name
-    """
-
     model_config = ConfigDict(frozen=True)
 
     url: str
@@ -36,9 +32,6 @@ def _pdf_path(output_dir: Path, url: str) -> Path:
     return output_dir / f"{digest}.pdf"
 
 
-# _extract_text_from_pdf moved to utils.py
-
-
 async def _download_pdf(
     session: aiohttp.ClientSession,
     url: str,
@@ -46,47 +39,22 @@ async def _download_pdf(
     max_retries: int = 3,
     base_delay: float = 1.0,
 ) -> Optional[bytes]:
-    """Download PDF with exponential backoff retry on failures.
-    
-    Args:
-        session: aiohttp client session
-        url: PDF URL to download
-        timeout: Timeout per attempt in seconds
-        max_retries: Maximum number of retry attempts
-        base_delay: Initial delay between retries (exponentially increased)
-    
-    Returns:
-        PDF bytes if successful, None otherwise
-    """
-    last_exception = None
-    
     for attempt in range(max_retries):
         try:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
                 if resp.status == 200:
                     return await resp.read()
-                elif resp.status >= 500:  # Server error - retry
-                    last_exception = Exception(f"HTTP {resp.status}")
+                elif resp.status >= 500:
                     if attempt < max_retries - 1:
-                        delay = base_delay * (2 ** attempt)
-                        await asyncio.sleep(delay)
+                        await asyncio.sleep(base_delay * (2 ** attempt))
                     continue
-                else:  # Client error or 4xx - don't retry
+                else:
                     return None
-        except asyncio.TimeoutError as e:
-            last_exception = e
+        except (asyncio.TimeoutError, Exception) as exc:
+            logger.debug("Download attempt %d failed for %s: %s", attempt + 1, url, exc)
             if attempt < max_retries - 1:
-                delay = base_delay * (2 ** attempt)
-                await asyncio.sleep(delay)
-            continue
-        except Exception as e:
-            last_exception = e
-            if attempt < max_retries - 1:
-                delay = base_delay * (2 ** attempt)
-                await asyncio.sleep(delay)
-            continue
-    
-    # Failed after all retries
+                await asyncio.sleep(base_delay * (2 ** attempt))
+
     return None
 
 
@@ -109,44 +77,56 @@ async def _handle_job(
 
         pdf_bytes = await _download_pdf(session, job.url, timeout)
         if not pdf_bytes:
+            logger.debug("Download failed or empty: %s", job.url)
             return None
 
-        if len(pdf_bytes) > max_mb * 1024 * 1024:
+        size_mb = len(pdf_bytes) / (1024 * 1024)
+        if size_mb > max_mb:
+            logger.debug("PDF too large (%.1f MB > %d MB): %s", size_mb, max_mb, job.url)
             return None
 
         output_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = _pdf_path(output_dir, job.url)
         try:
             pdf_path.write_bytes(pdf_bytes)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Could not save PDF to disk (%s): %s", exc, job.url)
             return None
 
         try:
             text = _extract_text_from_pdf(pdf_bytes)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Text extraction raised: %s – url=%s", exc, job.url)
             return None
 
         text = clean_text(text)
         if len(text) < min_chars:
+            logger.debug("Text too short (%d < %d): %s", len(text), min_chars, job.url)
             return None
         if not detect_nepali(text, min_ratio=nepali_ratio):
+            logger.debug("Nepali ratio below threshold: %s", job.url)
             return None
+
+        pdf_meta = _extract_pdf_metadata(pdf_bytes)
+        raw_meta = {
+            "content_type": "pdf",
+            "pdf_path": str(pdf_path),
+            "size_bytes": len(pdf_bytes),
+            **pdf_meta,
+        }
 
         return RawRecord(
             source_id=job.source_id,
             source_name=job.source_name,
             url=job.url,
-            title=None,
+            title=pdf_meta.get("title"),
             content=text,
             content_type="pdf",
             language="ne",
             published_at=None,
             category=job.category,
             fetched_at=datetime.utcnow().isoformat(),
-            raw_meta={
-                "content_type": "pdf",
-                "pdf_path": str(pdf_path),
-            },
+            raw_meta=raw_meta,
         )
 
 
