@@ -85,8 +85,7 @@ python scripts/corpus_cli.py coordinator \
   --categories News \
   --workers 1 \
   --max-pages 1 \
-  --num-sources 1 \
-  --pdf
+  --num-sources 1 
 ```
 
 If this succeeds, scale workers/pages gradually.
@@ -108,8 +107,7 @@ python scripts/corpus_cli.py coordinator \
   --rate-limit 1.5 \
   --max-concurrent 50 \
   --enrichment-batch-size 100 \
-  --checkpoint-interval 300 \
-  --pdf
+  --checkpoint-interval 300
 ```
 
 Resume interrupted run:

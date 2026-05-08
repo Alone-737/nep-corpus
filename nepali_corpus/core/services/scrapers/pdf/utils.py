@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import io
 import logging
-import os
-import tempfile
 from typing import Dict, List, Tuple
 
+from .detect import HAS_PYMUPDF
+
+logger = logging.getLogger(__name__)
+
 try:
-    import fitz  # PyMuPDF
-    HAS_PYMUPDF = True
+    import fitz
 except Exception:
-    HAS_PYMUPDF = False
+    pass
 
 try:
     import pdfplumber
@@ -18,11 +19,96 @@ try:
 except Exception:
     HAS_PDFPLUMBER = False
 
-logger = logging.getLogger(__name__)
-
+try:
+    from pypdf import PdfReader
+    HAS_PYPDF = True
+except Exception:
+    HAS_PYPDF = False
 
 _PDFPLUMBER_X_TOLERANCE = 5
 _PDFPLUMBER_Y_TOLERANCE = 3
+
+
+def _pymupdf_pages(pdf_bytes: bytes) -> List[str]:
+    if not HAS_PYMUPDF:
+        return []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        pages = [page.get_text("text") or "" for page in doc]
+        doc.close()
+        return pages
+    except Exception as exc:
+        logger.warning("PyMuPDF extraction failed: %s", exc)
+        return []
+
+
+def _pdfplumber_pages(pdf_bytes: bytes) -> List[str]:
+    if not HAS_PDFPLUMBER:
+        return []
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            pages: List[str] = []
+            for page in pdf.pages:
+                try:
+                    text = page.extract_text(
+                        x_tolerance=_PDFPLUMBER_X_TOLERANCE,
+                        y_tolerance=_PDFPLUMBER_Y_TOLERANCE,
+                    ) or ""
+                    pages.append(text)
+                except Exception:
+                    pages.append("")
+            return pages
+    except Exception as exc:
+        logger.debug("pdfplumber extraction failed: %s", exc)
+        return []
+
+
+def _pypdf_pages(pdf_bytes: bytes) -> List[str]:
+    if not HAS_PYPDF:
+        return []
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        return [page.extract_text() or "" for page in reader.pages]
+    except Exception as exc:
+        logger.debug("pypdf extraction failed: %s", exc)
+        return []
+
+
+def _pick_best_pages(
+    candidates: List[Tuple[str, List[str]]],
+) -> Tuple[List[str], str]:
+    from nepali_corpus.core.utils.normalize import devanagari_ratio
+
+    if not candidates:
+        return [], ""
+
+    max_pages = max(len(pages) for _, pages in candidates)
+    best_pages: List[str] = []
+    method_votes: Dict[str, int] = {}
+
+    for page_idx in range(max_pages):
+        best_text = ""
+        best_ratio = -1.0
+        best_method = ""
+
+        for method, pages in candidates:
+            if page_idx >= len(pages):
+                continue
+            text = pages[page_idx]
+            if not text:
+                continue
+            ratio = devanagari_ratio(text)
+            if ratio > best_ratio or (ratio == best_ratio and len(text) > len(best_text)):
+                best_text = text
+                best_ratio = ratio
+                best_method = method
+
+        best_pages.append(best_text)
+        if best_method:
+            method_votes[best_method] = method_votes.get(best_method, 0) + 1
+
+    winner = max(method_votes, key=method_votes.get) if method_votes else ""
+    return best_pages, winner
 
 
 def _extract_pdf_metadata(pdf_bytes: bytes) -> Dict[str, object]:
@@ -43,167 +129,69 @@ def _extract_pdf_metadata(pdf_bytes: bytes) -> Dict[str, object]:
     return meta
 
 
-def _try_pdfplumber(pdf_bytes: bytes) -> Tuple[str, bool]:
-    if not HAS_PDFPLUMBER:
-        return "", False
-    try:
-        from nepali_corpus.core.utils.normalize import devanagari_ratio
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            page_texts: List[str] = []
-            for page in pdf.pages:
-                try:
-                    page_texts.append(
-                        page.extract_text(
-                            x_tolerance=_PDFPLUMBER_X_TOLERANCE,
-                            y_tolerance=_PDFPLUMBER_Y_TOLERANCE,
-                        )
-                        or ""
-                    )
-                except Exception:
-                    page_texts.append("")
-            text = "\n\n".join(page_texts).strip()
-        good = bool(text) and (
-            len(text) > 200 or devanagari_ratio(text) > 0.2
-        )
-        return text, good
-    except Exception as exc:
-        logger.debug("pdfplumber extraction failed: %s", exc)
-        return "", False
-
-
-def _try_pymupdf(pdf_bytes: bytes) -> str:
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        pages = [page.get_text("text") for page in doc]
-        doc.close()
-        return "\n\n".join(pages).strip()
-    except Exception as exc:
-        logger.warning("PyMuPDF extraction failed: %s", exc)
-        return ""
-
-
-def _try_ocrmypdf(pdf_bytes: bytes) -> str:
-    try:
-        import ocrmypdf  # noqa: F401
-    except ImportError:
-        return ""
-
-    in_path = out_path = ""
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as in_f:
-            in_f.write(pdf_bytes)
-            in_path = in_f.name
-
-        out_fd, out_path = tempfile.mkstemp(suffix=".pdf")
-        os.close(out_fd)
-
-        ocrmypdf.ocr(
-            in_path,
-            out_path,
-            language="nep+eng",
-            force_ocr=False,
-            skip_text=False,
-        )
-
-        if HAS_PDFPLUMBER:
-            with pdfplumber.open(out_path) as pdf2:
-                pages2 = []
-                for p in pdf2.pages:
-                    try:
-                        pages2.append(
-                            p.extract_text(
-                                x_tolerance=_PDFPLUMBER_X_TOLERANCE,
-                                y_tolerance=_PDFPLUMBER_Y_TOLERANCE,
-                            )
-                            or ""
-                        )
-                    except Exception:
-                        pages2.append("")
-                return "\n\n".join(pages2).strip()
-        elif HAS_PYMUPDF:
-            doc2 = fitz.open(out_path)
-            pages2 = [p.get_text("text") for p in doc2]
-            doc2.close()
-            return "\n\n".join(pages2).strip()
-    except Exception as exc:
-        logger.debug("ocrmypdf OCR failed: %s", exc)
-    finally:
-        for path in (in_path, out_path):
-            if path:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-    return ""
-
-
-def _try_tesseract(pdf_bytes: bytes) -> str:
-    try:
-        import pytesseract
-        from PIL import Image, ImageOps
-    except ImportError:
-        logger.debug("pytesseract or PIL not installed – skipping image OCR fallback.")
-        return ""
-
-    if not HAS_PYMUPDF:
-        return ""
-
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        ocr_pages: List[str] = []
-        for page in doc:
-            pix = page.get_pixmap(dpi=300)
-            mode = "RGBA" if pix.alpha else "RGB"
-            img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
-            img = ImageOps.grayscale(img)
-            img = ImageOps.autocontrast(img)
-            ocr_pages.append(pytesseract.image_to_string(img, lang="nep+eng"))
-        doc.close()
-        return "\n\n".join(ocr_pages).strip()
-    except Exception as exc:
-        logger.debug("Per-page tesseract OCR failed: %s", exc)
-        return ""
-
-
-def _pick_best(candidates: List[str]) -> str:
-    from nepali_corpus.core.utils.normalize import devanagari_ratio
-
-    best = ""
-    best_ratio = -1.0
-    for text in candidates:
-        if not text:
-            continue
-        r = devanagari_ratio(text)
-        if r > best_ratio or (r == best_ratio and len(text) > len(best)):
-            best, best_ratio = text, r
-    return best
-
-
 def _extract_text_from_pdf(pdf_bytes: bytes) -> str:
     if not HAS_PYMUPDF:
         raise RuntimeError("PyMuPDF (fitz) is required for PDF extraction")
 
-    from nepali_corpus.core.utils.normalize import devanagari_ratio
+    from .detect import PdfType, detect_pdf_type
+    from .score import score_document
+    from .ocr import ocr_full_document, ocr_pages
+    from .clean import clean_pdf_text
 
-    try:
-        pl_text, pl_good = _try_pdfplumber(pdf_bytes)
-        if pl_good:
-            return pl_text
+    detection = detect_pdf_type(pdf_bytes)
+    logger.debug(
+        "PDF type: %s (pages=%d, scanned=%d, legacy=%d, unicode=%d)",
+        detection.pdf_type.value, detection.page_count,
+        len(detection.scanned_pages), len(detection.legacy_pages),
+        len(detection.unicode_pages),
+    )
 
-        mu_text = _try_pymupdf(pdf_bytes)
-        mu_ratio = devanagari_ratio(mu_text)
-
-        if len(mu_text) >= 200 and mu_ratio >= 0.2:
-            return _pick_best([pl_text, mu_text])
-
-        logger.debug("Native extraction weak (chars=%d, ratio=%.2f); trying OCR.", len(mu_text), mu_ratio)
-        ocr_text = _try_ocrmypdf(pdf_bytes)
-
-        if not ocr_text:
-            ocr_text = _try_tesseract(pdf_bytes)
-
-        return _pick_best([pl_text, mu_text, ocr_text])
-
-    except Exception as exc:
-        logger.error("PDF extraction error: %s", exc)
+    if detection.pdf_type == PdfType.SCANNED:
+        ocr_page_texts = ocr_full_document(pdf_bytes)
+        if ocr_page_texts:
+            return clean_pdf_text(ocr_page_texts)
         return ""
+
+    candidates: List[Tuple[str, List[str]]] = []
+
+    mu_pages = _pymupdf_pages(pdf_bytes)
+    if mu_pages:
+        candidates.append(("pymupdf", mu_pages))
+
+    mu_score = score_document(mu_pages, extraction_method="pymupdf") if mu_pages else None
+    needs_fallback = (
+        not mu_pages
+        or (mu_score and mu_score.overall_score < 0.3)
+        or (mu_score and mu_score.avg_devanagari_ratio < 0.15)
+    )
+
+    if needs_fallback:
+        pl_pages = _pdfplumber_pages(pdf_bytes)
+        if pl_pages:
+            candidates.append(("pdfplumber", pl_pages))
+        py_pages = _pypdf_pages(pdf_bytes)
+        if py_pages:
+            candidates.append(("pypdf", py_pages))
+
+    if not candidates:
+        ocr_page_texts = ocr_full_document(pdf_bytes)
+        if ocr_page_texts:
+            return clean_pdf_text(ocr_page_texts)
+        return ""
+
+    best_pages, method = _pick_best_pages(candidates)
+
+    doc_score = score_document(best_pages, extraction_method=method)
+    if doc_score.pages_needing_ocr:
+        logger.debug(
+            "OCR needed for %d/%d pages (method=%s, score=%.2f)",
+            len(doc_score.pages_needing_ocr), len(best_pages),
+            method, doc_score.overall_score,
+        )
+        ocr_results = ocr_pages(pdf_bytes, doc_score.pages_needing_ocr)
+        for page_num, ocr_text in ocr_results.items():
+            if ocr_text and len(ocr_text.strip()) > len(best_pages[page_num].strip()):
+                best_pages[page_num] = ocr_text
+
+    return clean_pdf_text(best_pages)
+

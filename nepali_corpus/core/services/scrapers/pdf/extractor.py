@@ -11,6 +11,8 @@ import aiohttp
 from pydantic import ConfigDict
 
 from .utils import HAS_PYMUPDF, _extract_pdf_metadata, _extract_text_from_pdf
+from .detect import detect_pdf_type
+from .score import score_document
 
 from nepali_corpus.core.models import RawRecord
 from nepali_corpus.core.models.base import CorpusEntity
@@ -108,10 +110,22 @@ async def _handle_job(
             return None
 
         pdf_meta = _extract_pdf_metadata(pdf_bytes)
+        detection = detect_pdf_type(pdf_bytes)
+        page_texts = text.split("\n\n") if text else []
+        doc_score = score_document(page_texts)
+
         raw_meta = {
             "content_type": "pdf",
             "pdf_path": str(pdf_path),
             "size_bytes": len(pdf_bytes),
+            "extraction": {
+                "pdf_type": detection.pdf_type.value,
+                "quality_score": doc_score.overall_score,
+                "avg_devanagari_ratio": doc_score.avg_devanagari_ratio,
+                "pages_ocrd": len(doc_score.pages_needing_ocr),
+                "extraction_method": doc_score.extraction_method,
+                "legacy_fonts": sorted(detection.legacy_fonts),
+            },
             **pdf_meta,
         }
 

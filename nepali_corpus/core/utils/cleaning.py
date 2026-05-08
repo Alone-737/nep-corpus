@@ -28,7 +28,7 @@ def _strip_pdf_artifacts(text: str) -> str:
     text = _GOV_UI_RE.sub("", text)
     for pattern, repl in _QUOTE_NORM:
         text = pattern.sub(repl, text)
-    text = _ASCII_PERIOD_AFTER_DEV_RE.sub(r"\1\u0964", text)
+    text = _ASCII_PERIOD_AFTER_DEV_RE.sub(lambda m: m.group(1) + "।", text)
     return text
 
 

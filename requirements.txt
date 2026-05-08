@@ -15,3 +15,6 @@ PyMuPDF>=1.23
 tenacity>=8.2
 httpx>=0.25
 pdfplumber>=0.11.0
+pypdf>=4.0
+pytesseract>=0.3.10
+Pillow>=10.0
