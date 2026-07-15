@@ -1,0 +1,73 @@
+version: 1
+
+# Multilingual datasets that contain a trainable Nepali subset. Evaluation and
+# benchmark splits are intentionally excluded. Keep higher-priority sources
+# first because optional instruction-level deduplication retains the first row.
+defaults:
+  language: ne
+  language_code: npi
+  script: Deva
+  min_user_chars: 4
+  min_assistant_chars: 2
+  min_devanagari_ratio: 0.20
+
+sources:
+  - name: aya_human_nepali
+    enabled: true
+    repo: CohereLabs/aya_dataset
+    config: default
+    split: train
+    adapter: aya
+    license: Apache-2.0
+    generation_type: human
+    condition: human,crowdsourced
+    filters:
+      equals:
+        language_code: npi
+
+  - name: indic_rag_nepali
+    enabled: true
+    repo: ai4bharat/Indic-Rag-Suite
+    config: ne
+    split: train
+    adapter: indic_rag
+    license: MIT
+    generation_type: synthetic_grounded
+    condition: cot,grounded,synthetic
+
+  - name: aya_safe_translated_nepali
+    enabled: true
+    repo: CohereLabs/aya_collection_language_split
+    config: nepali
+    split: train
+    adapter: aya_collection
+    license: Apache-2.0
+    generation_type: translated_synthetic
+    condition: translated,synthetic
+    filters:
+      equals:
+        language: npi
+        script: Deva
+        split: train
+      in:
+        # These are training-oriented sources. Do not replace this allowlist
+        # with the complete Aya collection: it contains benchmark-derived data.
+        dataset_name:
+          - SODA-inst (T)
+          - Dolly-v2 (T)
+          - Joke-explaination-inst (T)
+
+  - name: bactrian_x_nepali
+    enabled: true
+    repo: MBZUAI/Bactrian-X
+    config: ne
+    split: train
+    # Bactrian-X still ships a legacy dataset script. Current versions of
+    # datasets reject it, so use Hugging Face's official converted Parquet ref.
+    load_mode: parquet_export
+    revision: refs/convert/parquet
+    adapter: bactrian
+    license: CC-BY-NC-4.0
+    license_tier: noncommercial
+    generation_type: translated_synthetic
+    condition: translated,synthetic

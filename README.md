@@ -183,6 +183,9 @@ Add entries to registry files in [sources](sources).
 
 For schema and onboarding details, see [docs/ONBOARDING_SOURCES.md](docs/ONBOARDING_SOURCES.md).
 
+For the benchmark-safe multilingual Nepali SFT compiler and Colab commands, see
+[docs/MULTILINGUAL_NEPALI_SFT.md](docs/MULTILINGUAL_NEPALI_SFT.md).
+
 ## License
 
 MIT
