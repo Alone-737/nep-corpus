@@ -551,6 +551,18 @@ class ScrapeCoordinator:
                             ]
                         )
                     )
+                elif cfg.scraper_class == "municipality_scraper":
+                    from nepali_corpus.core.services.scrapers.municipality_scraper import MunicipalityScraper, post_to_raw
+                    jobs.append(
+                        ScrapeJob(
+                            name=f"gov:{cfg.id}",
+                            category="Gov",
+                            scraper_class="municipality_scraper",
+                            func=lambda c=cfg: [
+                                post_to_raw(p) for p in MunicipalityScraper(c).scrape(max_pages=max_pages or 3)
+                            ]
+                        )
+                    )
                 elif cfg.scraper_class == "regulatory" or cfg.scraper_class == "nrb_scraper":
                     from nepali_corpus.core.services.scrapers.regulatory_scraper import RegulatoryScraper
                     from nepali_corpus.core.models.government_schemas import RegistryEntry

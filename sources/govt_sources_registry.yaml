@@ -682,6 +682,8 @@
   url: https://kathmandu.gov.np
   source_type: government
   category: metropolitan
+  province: Bagmati
+  district: Kathmandu
   name_ne: काठमाडौं महानगरपालिका
   scraper_class: municipality_scraper
   priority: 1
@@ -693,6 +695,8 @@
   url: https://lmc.gov.np
   source_type: government
   category: metropolitan
+  province: Bagmati
+  district: Lalitpur
   name_ne: ललितपुर महानगरपालिका
   scraper_class: municipality_scraper
   priority: 2
@@ -704,6 +708,8 @@
   url: https://bharatpurmun.gov.np
   source_type: government
   category: metropolitan
+  province: Bagmati
+  district: Chitwan
   name_ne: भरतपुर महानगरपालिका
   scraper_class: municipality_scraper
   priority: 2
@@ -715,6 +721,8 @@
   url: https://pokharamun.gov.np
   source_type: government
   category: metropolitan
+  province: Gandaki
+  district: Kaski
   name_ne: पोखरा महानगरपालिका
   scraper_class: municipality_scraper
   priority: 2
@@ -726,6 +734,8 @@
   url: https://baborairatnagarmun.gov.np
   source_type: government
   category: metropolitan
+  province: Koshi
+  district: Morang
   name_ne: विराटनगर महानगरपालिका
   scraper_class: municipality_scraper
   priority: 2
@@ -737,6 +747,8 @@
   url: https://birgunjmun.gov.np
   source_type: government
   category: metropolitan
+  province: Madhesh
+  district: Parsa
   name_ne: वीरगंज महानगरपालिका
   scraper_class: municipality_scraper
   priority: 2
@@ -748,6 +760,8 @@
   url: https://tarakeshwormun.gov.np
   source_type: government
   category: Municiplaity
+  province: Bagmati
+  district: Kathmandu
   name_ne: तारकेश्वर नगरपालिका
   scraper_class: municipality_scraper
   priority: 3
@@ -996,6 +1010,8 @@
   url: https://dharanmun.gov.np
   source_type: government
   category: sub_metropolitan
+  province: Koshi
+  district: Sunsari
   name_ne: धरान उपमहानगरपालिका
   scraper_class: municipality_scraper
   priority: 3
@@ -1007,6 +1023,8 @@
   url: https://itaharimun.gov.np
   source_type: government
   category: sub_metropolitan
+  province: Koshi
+  district: Sunsari
   name_ne: ईटहरी उपमहानगरपालिका
   scraper_class: municipality_scraper
   priority: 3
@@ -1018,6 +1036,8 @@
   url: https://hetaudamun.gov.np
   source_type: government
   category: sub_metropolitan
+  province: Bagmati
+  district: Makwanpur
   name_ne: हेटौंडा उपमहानगरपालिका
   scraper_class: municipality_scraper
   priority: 3
@@ -1029,6 +1049,8 @@
   url: https://butwalmun.gov.np
   source_type: government
   category: sub_metropolitan
+  province: Lumbini
+  district: Rupandehi
   name_ne: बुटवल उपमहानगरपालिका
   scraper_class: municipality_scraper
   priority: 3
@@ -1040,6 +1062,8 @@
   url: https://nepalgunjmun.gov.np
   source_type: government
   category: sub_metropolitan
+  province: Lumbini
+  district: Banke
   name_ne: नेपालगंज उपमहानगरपालिका
   scraper_class: municipality_scraper
   priority: 3
@@ -1051,6 +1075,8 @@
   url: https://siddharthanagarmun.gov.np
   source_type: government
   category: sub_metropolitan
+  province: Lumbini
+  district: Rupandehi
   name_ne: सिद्धार्थनगर नगरपालिका
   scraper_class: municipality_scraper
   priority: 3
@@ -1062,6 +1088,8 @@
   url: https://ghorahimun.gov.np
   source_type: government
   category: sub_metropolitan
+  province: Lumbini
+  district: Dang
   name_ne: घोराही उपमहानगरपालिका
   scraper_class: municipality_scraper
   priority: 3
@@ -1073,6 +1101,8 @@
   url: https://tulsipurmun.gov.np
   source_type: government
   category: sub_metropolitan
+  province: Lumbini
+  district: Dang
   name_ne: तुलसीपुर उपमहानगरपालिका
   scraper_class: municipality_scraper
   priority: 3
@@ -1084,9 +1114,443 @@
   url: https://janakpurdhanmun.gov.np
   source_type: government
   category: sub_metropolitan
+  province: Madhesh
+  district: Dhanusha
   name_ne: जनकपुरधाम उपमहानगरपालिका
   scraper_class: municipality_scraper
   priority: 2
   poll_interval_mins: 120
   meta:
     group: sub_metropolitan
+- id: baglung
+  name: Baglung Municipality
+  name_ne: बागलुङ नगरपालिका
+  url: https://baglungmun.gov.np
+  source_type: government
+  category: municipality
+  province: Gandaki
+  district: Baglung
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: banepa
+  name: Banepa Municipality
+  name_ne: बनेपा नगरपालिका
+  url: https://banepamun.gov.np
+  source_type: government
+  category: municipality
+  province: Bagmati
+  district: Kavrepalanchok
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: beni
+  name: Beni Municipality
+  name_ne: बेनी नगरपालिका
+  url: https://benimun.gov.np
+  source_type: government
+  category: municipality
+  province: Gandaki
+  district: Myagdi
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: besishahar
+  name: Besishahar Municipality
+  name_ne: बेसीशहर नगरपालिका
+  url: https://besishaharmun.gov.np
+  source_type: government
+  category: municipality
+  province: Gandaki
+  district: Lamjung
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: bheemdatta
+  name: Bheemdatta Municipality
+  name_ne: भीमदत्त नगरपालिका
+  url: http://bheemdattamun.gov.np
+  source_type: government
+  category: municipality
+  province: Sudurpashchim
+  district: Kanchanpur
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: bhaktapur
+  name: Bhaktapur Municipality
+  name_ne: भक्तपुर नगरपालिका
+  url: https://bhaktapurmun.gov.np
+  source_type: government
+  category: municipality
+  province: Bagmati
+  district: Bhaktapur
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: birendranagar
+  name: Birendranagar Municipality
+  name_ne: वीरेन्द्रनगर नगरपालिका
+  url: https://birendranagarmun.gov.np
+  source_type: government
+  category: municipality
+  province: Karnali
+  district: Surkhet
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: birtamod
+  name: Birtamod Municipality
+  name_ne: बिर्तामोड नगरपालिका
+  url: https://birtamodmun.gov.np
+  source_type: government
+  category: municipality
+  province: Koshi
+  district: Jhapa
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: budhanilkantha
+  name: Budhanilkantha Municipality
+  name_ne: बूढानीलकण्ठ नगरपालिका
+  url: https://budhanilkanthamun.gov.np
+  source_type: government
+  category: municipality
+  province: Bagmati
+  district: Kathmandu
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: chandragiri
+  name: Chandragiri Municipality
+  name_ne: चन्द्रागिरी नगरपालिका
+  url: https://chandragirimun.gov.np
+  source_type: government
+  category: municipality
+  province: Bagmati
+  district: Kathmandu
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: damak
+  name: Damak Municipality
+  name_ne: दमक नगरपालिका
+  url: https://damakmun.gov.np
+  source_type: government
+  category: municipality
+  province: Koshi
+  district: Jhapa
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: dhangadhi
+  name: Dhangadhi Sub-Metropolitan City
+  name_ne: धनगढी उप-महानगरपालिका
+  url: https://dhangadhimun.gov.np
+  source_type: government
+  category: municipality
+  province: Sudurpashchim
+  district: Kailali
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+    note: unreachable from dev network (timeout); site is live per search index
+- id: dhulikhel
+  name: Dhulikhel Municipality
+  name_ne: धुलिखेल नगरपालिका
+  url: https://dhulikhelmun.gov.np
+  source_type: government
+  category: municipality
+  province: Bagmati
+  district: Kavrepalanchok
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: gokarneshwor
+  name: Gokarneshwor Municipality
+  name_ne: गोकर्णेश्वर नगरपालिका
+  url: https://gokarneshwormun.gov.np
+  source_type: government
+  category: municipality
+  province: Bagmati
+  district: Kathmandu
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: gorkha
+  name: Gorkha Municipality
+  name_ne: गोरखा नगरपालिका
+  url: https://gorkhamun.gov.np
+  source_type: government
+  category: municipality
+  province: Gandaki
+  district: Gorkha
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: gulariya
+  name: Gulariya Municipality
+  name_ne: गुलरिया नगरपालिका
+  url: https://gulariyamun.gov.np
+  source_type: government
+  category: municipality
+  province: Lumbini
+  district: Bardiya
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: inaruwa
+  name: Inaruwa Municipality
+  name_ne: इनरुवा नगरपालिका
+  url: https://inaruwamun.gov.np
+  source_type: government
+  category: municipality
+  province: Koshi
+  district: Sunsari
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: jaleshwor
+  name: Jaleshwor Municipality
+  name_ne: जलेश्वर नगरपालिका
+  url: https://jaleshwormun.gov.np
+  source_type: government
+  category: municipality
+  province: Madhesh
+  district: Mahottari
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: kalaiya
+  name: Kalaiya Municipality
+  name_ne: कलैया नगरपालिका
+  url: https://kalaiyamun.gov.np
+  source_type: government
+  category: municipality
+  province: Madhesh
+  district: Bara
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: katari
+  name: Katari Municipality
+  name_ne: कटारी नगरपालिका
+  url: https://katarimun.gov.np
+  source_type: government
+  category: municipality
+  province: Koshi
+  district: Udayapur
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: kirtipur
+  name: Kirtipur Municipality
+  name_ne: कीर्तिपुर नगरपालिका
+  url: https://kirtipurmun.gov.np
+  source_type: government
+  category: municipality
+  province: Bagmati
+  district: Kathmandu
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  endpoints:
+    notice_list: /announcements
+  meta:
+    group: municipality
+- id: kohalpur
+  name: Kohalpur Municipality
+  name_ne: कोहलपुर नगरपालिका
+  url: https://kohalpurmun.gov.np
+  source_type: government
+  category: municipality
+  province: Lumbini
+  district: Banke
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: lahan
+  name: Lahan Municipality
+  name_ne: लहान नगरपालिका
+  url: https://lahanmun.gov.np
+  source_type: government
+  category: municipality
+  province: Koshi
+  district: Siraha
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: mechinagar
+  name: Mechinagar Municipality
+  name_ne: मेचीनगर नगरपालिका
+  url: https://mechinagarmun.gov.np
+  source_type: government
+  category: municipality
+  province: Koshi
+  district: Jhapa
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: panauti
+  name: Panauti Municipality
+  name_ne: पनौती नगरपालिका
+  url: https://panautimun.gov.np
+  source_type: government
+  category: municipality
+  province: Bagmati
+  district: Kavrepalanchok
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: putalibazar
+  name: Putalibazar Municipality
+  name_ne: पुतलीबजार नगरपालिका
+  url: https://putalibazarmun.gov.np
+  source_type: government
+  category: municipality
+  province: Gandaki
+  district: Syangja
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: rajbiraj
+  name: Rajbiraj Municipality
+  name_ne: राजविराज नगरपालिका
+  url: https://rajbirajmun.gov.np
+  source_type: government
+  category: municipality
+  province: Koshi
+  district: Saptari
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: siraha
+  name: Siraha Municipality
+  name_ne: सिराहा नगरपालिका
+  url: https://sirahamun.gov.np
+  source_type: government
+  category: municipality
+  province: Madhesh
+  district: Siraha
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: tansen
+  name: Tansen Municipality
+  name_ne: तानसेन नगरपालिका
+  url: https://tansenmun.gov.np
+  source_type: government
+  category: municipality
+  province: Lumbini
+  district: Palpa
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: tokha
+  name: Tokha Municipality
+  name_ne: टोखा नगरपालिका
+  url: https://tokhamun.gov.np
+  source_type: government
+  category: municipality
+  province: Bagmati
+  district: Kathmandu
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: triyuga
+  name: Triyuga Municipality
+  name_ne: त्रियुगा नगरपालिका
+  url: https://triyugamun.gov.np
+  source_type: government
+  category: municipality
+  province: Koshi
+  district: Udayapur
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: vyas
+  name: Vyas Municipality
+  name_ne: व्यास नगरपालिका
+  url: https://vyasmun.gov.np
+  source_type: government
+  category: municipality
+  province: Gandaki
+  district: Tanahun
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality
+- id: waling
+  name: Waling Municipality
+  name_ne: वालिङ नगरपालिका
+  url: https://walingmun.gov.np
+  source_type: government
+  category: municipality
+  province: Gandaki
+  district: Syangja
+  scraper_class: municipality_scraper
+  priority: 3
+  poll_interval_mins: 180
+  meta:
+    group: municipality

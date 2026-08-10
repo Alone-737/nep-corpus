@@ -429,6 +429,7 @@ def fetch_registry_records(
 
     ministry_configs: Dict[str, MinistryConfig] = {}
     regulatory_entries: List[RegistryEntry] = []
+    municipality_entries: List[RegistryEntry] = []
     other_entries: List[RegistryEntry] = []
 
     for entry in entries:
@@ -442,6 +443,8 @@ def fetch_registry_records(
                     endpoints=entry.endpoints,
                     priority=entry.priority,
                 )
+        elif entry.scraper_class == "municipality_scraper":
+            municipality_entries.append(entry)
         elif entry.scraper_class == "regulatory":
             regulatory_entries.append(entry)
         else:
@@ -460,6 +463,10 @@ def fetch_registry_records(
     if regulatory_entries:
         from .regulatory_scraper import fetch_raw_records as fetch_regulatory
         records.extend(fetch_regulatory(regulatory_entries, pages=max(1, pages)))
+
+    if municipality_entries:
+        from .municipality_scraper import fetch_raw_records as fetch_municipality
+        records.extend(fetch_municipality(municipality_entries, pages=max(1, pages)))
 
     if other_entries:
         from .regulatory_scraper import fetch_raw_records as fetch_regulatory
