@@ -52,6 +52,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         try:
             for rec in ingest_sources_iter(
                 sources=args.sources,
+                municipality=args.municipality,
                 govt_registry_path=args.govt_registry,
                 govt_registry_groups=args.govt_groups,
                 govt_pages=args.govt_pages,
@@ -165,6 +166,7 @@ def cmd_all(args: argparse.Namespace) -> None:
         try:
             for rec in ingest_sources_iter(
                 sources=args.sources,
+                municipality=args.municipality,
                 govt_registry_path=args.govt_registry,
                 govt_registry_groups=args.govt_groups,
                 govt_pages=args.govt_pages,
@@ -490,6 +492,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="Max pages per govt endpoint (default: 3)",
     )
+    p_ingest.add_argument(
+        "--no-municipality",
+        action="store_false",
+        dest="municipality",
+        help="Skip municipality notice-board scraping (default: on)",
+    )
     p_ingest.add_argument("--gzip", action="store_true", help="Write .jsonl.gz output")
     p_ingest.set_defaults(func=cmd_ingest)
 
@@ -548,6 +556,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=3,
         help="Max pages per govt endpoint (default: 3)",
+    )
+    p_all.add_argument(
+        "--no-municipality",
+        action="store_false",
+        dest="municipality",
+        help="Skip municipality notice-board scraping (default: on)",
     )
     p_all.add_argument("--gzip", action="store_true", help="Write .jsonl.gz output")
     p_all.add_argument("--cache-dir", default="data/html_cache")

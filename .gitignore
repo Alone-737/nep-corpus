@@ -53,3 +53,9 @@ htmlcov/
 
 # OS
 Thumbs.db
+
+# Tooling artifacts
+.playwright-mcp/
+
+# Smoke test output
+smoke.jsonl

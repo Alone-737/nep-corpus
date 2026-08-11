@@ -35,11 +35,13 @@ import json
 import logging
 import os
 import re
+import sys
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 import urllib3
+import yaml
 from bs4 import BeautifulSoup
 
 try:
@@ -591,6 +593,77 @@ def fetch_raw_records(entries, pages: int = DEFAULT_MAX_PAGES, max_items: int = 
     return records
 
 
+# ============ Config — single source of truth ============
+
+DEFAULT_CONFIG_PATH = os.path.join("sources", "municipalities.yaml")
+
+PROVINCES = {
+    "Koshi", "Madhesh", "Bagmati", "Gandaki", "Lumbini", "Karnali", "Sudurpashchim",
+}
+
+DISTRICTS = {
+    "Achham", "Arghakhanchi", "Baglung", "Baitadi", "Bajhang", "Bajura", "Banke",
+    "Bara", "Bardiya", "Bhaktapur", "Bhojpur", "Chitwan", "Dadeldhura", "Dailekh",
+    "Dang", "Darchula", "Dhading", "Dhankuta", "Dhanusa", "Dhanusha", "Dolakha",
+    "Dolpa","Doti", "Gorkha", "Gulmi", "Humla", "Ilam", "Jajarkot", "Jhapa", "Jumla",
+    "Kailali", "Kalikot", "Kanchanpur", "Kapilvastu", "Kaski", "Kathmandu",
+    "Kavrepalanchok", "Khotang", "Lalitpur", "Lamjung", "Mahottari", "Makwanpur",
+    "Manang", "Morang", "Mugu", "Mustang", "Myagdi", "Nawalparasi", "Nuwakot",
+    "Okhaldhunga", "Palpa", "Panchthar", "Parbat", "Parsa", "Pyuthan", "Ramechhap",
+    "Rasuwa", "Rautahat", "Rolpa", "Rukum", "Rupandehi", "Salyan", "Sankhuwasabha",
+    "Saptari", "Sarlahi", "Sindhuli", "Sindhupalchok", "Siraha", "Solukhumbu",
+    "Sunsari", "Surkhet", "Syangja", "Tanahun", "Taplejung", "Terhathum", "Udayapur",
+}
+
+
+def load_config(path: str = DEFAULT_CONFIG_PATH) -> Dict[str, SourceConfig]:
+    """Load the municipality config YAML — the single source of truth.
+
+    Fail loud on ANY violation: duplicate id, missing field, unknown
+    province/district, bad URL, non-root endpoint. Never silently drop.
+    """
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, list):
+        raise ValueError(f"{path}: config must be a YAML list of entries")
+
+    configs: Dict[str, SourceConfig] = {}
+    for entry in data:
+        if not isinstance(entry, dict):
+            raise ValueError(f"{path}: entry must be a mapping, got {type(entry).__name__}")
+        sid = entry.get("id")
+        if not sid:
+            raise ValueError(f"{path}: entry missing id")
+        if sid in configs:
+            raise ValueError(f"{path}: duplicate municipality id {sid!r}")
+        for field in ("url", "province", "district", "name_ne"):
+            if not entry.get(field):
+                raise ValueError(f"{path}: municipality {sid!r} missing field {field!r}")
+        url = entry["url"]
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(f"{path}: municipality {sid!r} url not http(s): {url!r}")
+        if entry["province"] not in PROVINCES:
+            raise ValueError(
+                f"{path}: municipality {sid!r} unknown province {entry['province']!r} "
+                f"(use one of {sorted(PROVINCES)})"
+            )
+        if entry["district"] not in DISTRICTS:
+            raise ValueError(
+                f"{path}: municipality {sid!r} unknown district {entry['district']!r}"
+            )
+        endpoints = entry.get("endpoints") or {}
+        if not isinstance(endpoints, dict):
+            raise ValueError(f"{path}: municipality {sid!r} endpoints must be a mapping")
+        for key, val in endpoints.items():
+            if not isinstance(val, str) or not val.startswith("/") or "://" in val:
+                raise ValueError(
+                    f"{path}: municipality {sid!r} endpoints.{key} must be a "
+                    f"root-relative path, got {val!r}"
+                )
+        configs[sid] = SourceConfig(**entry)
+    return configs
+
+
 # ============ CLI ============
 
 MUNICIPALITIES: Dict[str, SourceConfig] = {}
@@ -602,34 +675,79 @@ def get_scraper(municipality_id: str) -> MunicipalityScraper:
     return MunicipalityScraper(MUNICIPALITIES[municipality_id])
 
 
-def main():
+def main(argv: Optional[List[str]] = None) -> None:
+    # Windows consoles default to cp1252 — Devanagari titles need UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(description="Scrape Nepal municipality notice boards")
-    parser.add_argument("--id", help="Municipality ID")
+    parser.add_argument(
+        "--config", default=DEFAULT_CONFIG_PATH,
+        help=f"Config YAML (default: {DEFAULT_CONFIG_PATH})",
+    )
+    parser.add_argument("--id", help="Municipality ID (e.g. vyas, kirtipur)")
     parser.add_argument("--all", action="store_true", help="Scrape all configured municipalities")
     parser.add_argument("--pages", "-p", type=int, default=DEFAULT_MAX_PAGES)
     parser.add_argument("--max-items", type=int, default=DEFAULT_MAX_ITEMS)
-    parser.add_argument("--list", "-l", action="store_true")
-    parser.add_argument("--output", "-o")
-    args = parser.parse_args()
+    parser.add_argument("--list", "-l", action="store_true", help="List configured municipalities")
+    parser.add_argument("--output", "-o", help="Write posts as JSONL (one RawRecord per line)")
+    args = parser.parse_args(argv)
+
+    try:
+        configs = load_config(args.config)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    MUNICIPALITIES.update(configs)
 
     if args.list or (not args.id and not args.all):
-        print("Municipality scraper: no CLI registry configured; use the pipeline registry.")
-        print("  Sources: sources/govt_sources_registry.yaml (scraper_class: municipality_scraper)")
+        print("=" * 70)
+        print(f"Nepal Municipality Scraper — {len(configs)} municipalities")
+        print("=" * 70)
+        for cid, cfg in configs.items():
+            print(f"  {cid:16s} {cfg.name_ne:32s} {str(cfg.province or ''):10s} "
+                  f"{str(cfg.district or ''):14s} {cfg.url}")
+        print(f"\nconfig: {args.config}")
         return
 
-    targets = [args.id] if args.id else list(MUNICIPALITIES)
-    for mid in targets:
-        scraper = get_scraper(mid)
-        posts = scraper.scrape(max_pages=args.pages, max_items=args.max_items)
-        print(f"\n{mid}: {len(posts)} posts")
-        for p in posts[:5]:
-            print(f"  - {p.title[:70]}")
-            if p.date_ad:
-                print(f"    AD: {p.date_ad.date()}  BS: {p.date_bs}")
-        if args.output:
-            os.makedirs(args.output, exist_ok=True)
-            with open(os.path.join(args.output, f"{mid}.json"), "w", encoding="utf-8") as f:
-                json.dump([p.model_dump(mode="json") for p in posts], f, ensure_ascii=False, indent=2, default=str)
+    if args.id and args.id not in configs:
+        parser.error(f"unknown municipality {args.id!r} — use --list")
+
+    targets = [args.id] if args.id else list(configs)
+
+    out_f = None
+    if args.output:
+        out_f = open(args.output, "w", encoding="utf-8")
+
+    try:
+        total = 0
+        for mid in targets:
+            try:
+                scraper = get_scraper(mid)
+                posts = scraper.scrape(max_pages=args.pages, max_items=args.max_items)
+            except Exception as exc:  # one dead site must not kill the batch
+                print(f"\n{mid}: FAILED: {exc}")
+                continue
+            total += len(posts)
+            print(f"\n{mid}: {len(posts)} posts")
+            for p in posts[:5]:
+                print(f"  - {p.title[:70]}")
+                if p.date_ad:
+                    print(f"    AD: {p.date_ad.date()}  BS: {p.date_bs}")
+            if out_f:
+                for p in posts:
+                    rec = post_to_raw(p)
+                    if hasattr(rec, "model_dump"):
+                        payload = rec.model_dump(mode="json")
+                    else:
+                        payload = vars(rec)
+                    out_f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+        print(f"\nTotal: {total} posts from {len(targets)} target(s)")
+    finally:
+        if out_f:
+            out_f.close()
 
 
 if __name__ == "__main__":
