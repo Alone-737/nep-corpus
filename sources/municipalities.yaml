@@ -84,10 +84,10 @@
   meta:
     group: metropolitan
 - id: tarkeshwor
-  name: Tarkeshwor Municiplaity
+  name: Tarkeshwor Municipality
   url: https://tarakeshwormun.gov.np
   source_type: government
-  category: Municiplaity
+  category: municipality
   province: Bagmati
   district: Kathmandu
   name_ne: तारकेश्वर नगरपालिका
@@ -95,7 +95,7 @@
   priority: 3
   poll_interval_mins: 180
   meta:
-    group: Municiplaity
+    group: municipality
 - id: dharan
   name: Dharan Sub-Metropolitan City
   url: https://dharanmun.gov.np
@@ -508,7 +508,7 @@
   url: https://lahanmun.gov.np
   source_type: government
   category: municipality
-  province: Koshi
+  province: Madhesh
   district: Siraha
   scraper_class: municipality_scraper
   priority: 3
@@ -560,7 +560,7 @@
   url: https://rajbirajmun.gov.np
   source_type: government
   category: municipality
-  province: Koshi
+  province: Madhesh
   district: Saptari
   scraper_class: municipality_scraper
   priority: 3

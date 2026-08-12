@@ -127,6 +127,9 @@ class ScrapeCoordinator:
         pdf_enabled: bool = False,
         enrichment_workers: int = 10,
         skip_successful_only: bool = True,
+        municipality_enabled: bool = True,
+        municipality_max_items: Optional[int] = None,
+        municipality_since_months: Optional[int] = None,
     ) -> None:
         self._storage = storage
         self.state = ScrapeState()
@@ -136,6 +139,9 @@ class ScrapeCoordinator:
         self._internet_down = False
         self._enrichment_workers = enrichment_workers
         self._skip_successful_only = skip_successful_only
+        self._municipality_enabled = municipality_enabled
+        self._municipality_max_items = municipality_max_items
+        self._municipality_since_months = municipality_since_months
 
         # Run tracking state
         self._run_id: Optional[str] = None
@@ -528,6 +534,12 @@ class ScrapeCoordinator:
             if govt_registry_groups:
                 allowed = set(g.strip() for g in govt_registry_groups)
                 gov_sources = [s for s in gov_sources if s.category in allowed]
+            if not self._municipality_enabled:
+                gov_sources = [
+                    source
+                    for source in gov_sources
+                    if source.scraper_class != "municipality_scraper"
+                ]
                 
             for cfg in gov_sources:
                 if cfg.scraper_class == "ministry_generic":
@@ -552,14 +564,20 @@ class ScrapeCoordinator:
                         )
                     )
                 elif cfg.scraper_class == "municipality_scraper":
-                    from nepali_corpus.core.services.scrapers.municipality_scraper import MunicipalityScraper, post_to_raw
+                    from nepali_corpus.core.services.scrapers.municipality_scraper import MunicipalityScraper, post_to_raw_records
                     jobs.append(
                         ScrapeJob(
                             name=f"gov:{cfg.id}",
                             category="Gov",
                             scraper_class="municipality_scraper",
                             func=lambda c=cfg: [
-                                post_to_raw(p) for p in MunicipalityScraper(c).scrape(max_pages=max_pages or 3)
+                                rec
+                                for post in MunicipalityScraper(c).scrape(
+                                    max_pages=max_pages or 3,
+                                    max_items=self._municipality_max_items,
+                                    since_months=self._municipality_since_months,
+                                )
+                                for rec in post_to_raw_records(post)
                             ]
                         )
                     )
@@ -767,6 +785,8 @@ class ScrapeCoordinator:
             "num_sources": num_sources,
             "enrichment_batch_size": self._enrichment_batch_size,
             "source_timeout": self._source_timeout,
+            "municipality_max_items": self._municipality_max_items,
+            "municipality_since_months": self._municipality_since_months,
         }
         try:
             self._db_run_id = await session.create_pipeline_run(
@@ -1169,7 +1189,10 @@ class ScrapeCoordinator:
             if self._visited_urls.contains(record.url) or record.url in seen_set:
                 continue
 
-            if pdf_enabled and record.url.lower().endswith(".pdf"):
+            if pdf_enabled and (
+                record.content_type == "pdf"
+                or identify_content_type(record.url) == "pdf"
+            ):
                 pdf_jobs.append(PdfJob(
                     url=record.url,
                     source_id=record.source_id,

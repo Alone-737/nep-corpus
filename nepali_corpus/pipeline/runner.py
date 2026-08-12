@@ -30,6 +30,7 @@ from ..core.utils.io import ensure_parent_dir, maybe_gzip_path, open_text
 
 def load_municipality_entries(
     govt_registry_path: Optional[str] = None,
+    groups: Optional[List[str]] = None,
 ) -> List[SourceConfig]:
     """Load municipality entries from the unified registry directory.
 
@@ -42,7 +43,11 @@ def load_municipality_entries(
     )
     reg = SourceRegistry(registry_dir)
     reg.load_all()
-    return reg.list(scraper_class="municipality_scraper")
+    entries = reg.list(scraper_class="municipality_scraper")
+    if groups:
+        allowed = {group.strip() for group in groups if group and group.strip()}
+        entries = [entry for entry in entries if entry.category in allowed]
+    return entries
 
 
 def ingest_sources_iter(
@@ -56,6 +61,8 @@ def ingest_sources_iter(
     govt_pages: int = 3,
     social: bool = True,
     municipality: bool = True,
+    municipality_max_items: Optional[int] = None,
+    municipality_since_months: Optional[int] = None,
 ) -> Iterable[RawRecord]:
     """
     Iterator version of ingest_sources.
@@ -89,8 +96,9 @@ def ingest_sources_iter(
             include_dao_default = not (govt_registry_groups and len(govt_registry_groups) > 0)
             dao = "dao" in normalized or (govt and include_dao_default)
             social = "social" in normalized
-            # Municipalities ride along with govt, exactly like DAO.
-            municipality = "municipality" in normalized or (govt and include_dao_default)
+            # Municipality groups remain selectable even when a govt group
+            # filter is present; non-municipality groups simply load no entries.
+            municipality = "municipality" in normalized or govt
 
     if rss:
         for rec in news_rss_scraper.fetch_raw_records():
@@ -113,11 +121,17 @@ def ingest_sources_iter(
         for rec in dao_scraper.fetch_raw_records():
             yield rec
     if municipality:
-        for rec in municipality_scraper.fetch_raw_records(
-            load_municipality_entries(govt_registry_path),
-            pages=govt_pages,
-        ):
-            yield rec
+        municipality_entries = load_municipality_entries(
+            govt_registry_path, govt_registry_groups
+        )
+        if municipality_entries:
+            for rec in municipality_scraper.fetch_raw_records(
+                municipality_entries,
+                pages=govt_pages,
+                max_items=municipality_max_items,
+                since_months=municipality_since_months,
+            ):
+                yield rec
     if social:
         for rec in social_scraper.fetch_raw_records(max_pages=govt_pages):
             yield rec
@@ -129,6 +143,8 @@ def ingest_sources(
     dao: bool = True,
     social: bool = True,
     municipality: bool = True,
+    municipality_max_items: Optional[int] = None,
+    municipality_since_months: Optional[int] = None,
     sources: Optional[List[str]] = None,
     govt_registry_path: Optional[str] = None,
     govt_registry_groups: Optional[List[str]] = None,
@@ -142,6 +158,8 @@ def ingest_sources(
             dao=dao,
             social=social,
             municipality=municipality,
+            municipality_max_items=municipality_max_items,
+            municipality_since_months=municipality_since_months,
             sources=sources,
             govt_registry_path=govt_registry_path,
             govt_registry_groups=govt_registry_groups,
@@ -307,6 +325,8 @@ def run_pipeline(
     govt_registry_groups: Optional[List[str]] = None,
     govt_pages: int = 3,
     municipality: bool = True,
+    municipality_max_items: Optional[int] = None,
+    municipality_since_months: Optional[int] = None,
     gzip_output: bool = False,
 ) -> int:
     raw_records = ingest_sources(
@@ -314,6 +334,8 @@ def run_pipeline(
         govt_registry_groups=govt_registry_groups,
         govt_pages=govt_pages,
         municipality=municipality,
+        municipality_max_items=municipality_max_items,
+        municipality_since_months=municipality_since_months,
     )
     save_raw_jsonl(raw_records, raw_out, gzip_output=gzip_output)
 

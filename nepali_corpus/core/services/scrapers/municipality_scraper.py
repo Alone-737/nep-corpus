@@ -110,6 +110,7 @@ def post_to_raw(post: GovtPost) -> RawRecord:
         "attachment_urls": post.attachment_urls,
         "province": post.province,
         "district": post.district,
+        "record_kind": "notice_page",
     }
     if post.date_bs:
         raw_meta["date_bs"] = post.date_bs
@@ -125,9 +126,52 @@ def post_to_raw(post: GovtPost) -> RawRecord:
         district=post.district,
         category=post.category,
         content_type=identify_content_type(post.url),
+        summary=post.content_snippet,
         fetched_at=scraped_at,
         raw_meta=raw_meta,
     )
+
+
+def post_to_raw_records(post: GovtPost) -> List[RawRecord]:
+    """Return the notice page plus one directly enrichable record per PDF.
+
+    Municipal notice pages frequently contain only a title and a download
+    link. Keeping PDF URLs solely in metadata prevents the coordinator's PDF
+    path from ever seeing the actual document.
+    """
+    records = [post_to_raw(post)]
+    scraped_at = post.scraped_at
+    if hasattr(scraped_at, "isoformat"):
+        scraped_at = scraped_at.isoformat()
+
+    seen = set()
+    for attachment_url in post.attachment_urls:
+        if attachment_url in seen or identify_content_type(attachment_url) != "pdf":
+            continue
+        seen.add(attachment_url)
+        records.append(
+            RawRecord(
+                source_id=post.source_id,
+                source_name=post.source_name,
+                url=attachment_url,
+                title=post.title,
+                language=post.language,
+                published_at=post.date_ad.isoformat() if post.date_ad else None,
+                date_bs=post.date_bs,
+                province=post.province,
+                district=post.district,
+                category=post.category,
+                content_type="pdf",
+                fetched_at=scraped_at,
+                raw_meta={
+                    "record_kind": "notice_attachment",
+                    "parent_notice_url": post.url,
+                    "province": post.province,
+                    "district": post.district,
+                },
+            )
+        )
+    return records
 
 
 def _convert_nepali_digits(text: str) -> str:
@@ -256,8 +300,16 @@ def _is_brand_title(text: str, config) -> bool:
     if getattr(config, "name", None):
         candidates.append(config.name)
     for cand in candidates:
-        if cand and re.sub(r"\s+", " ", cand).strip() in norm:
+        candidate = re.sub(r"\s+", " ", cand or "").strip(" \t.,;:!?।()[]\"'")
+        if candidate and norm.casefold() == candidate.casefold():
             return True
+        if candidate and norm.casefold().startswith(candidate.casefold()):
+            suffix = norm[len(candidate):].strip(" \t.,;:!?।()[]\"'-")
+            if re.fullmatch(
+                r"(?:(?:नगर|गाउँ) कार्यपालिकाको )?कार्यालय",
+                suffix,
+            ):
+                return True
     return False
 
 
@@ -269,6 +321,18 @@ def _guess_family(href: str) -> Optional[str]:
     if DRUPAL_ITEM.search(href):
         return "drupal"
     return None
+
+
+def _same_origin(url: str, base_url: str) -> bool:
+    """Allow only links hosted by the configured municipality origin."""
+    target = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    base = (urlparse(base_url).hostname or "").lower().removeprefix("www.")
+    return bool(target and base and target == base)
+
+
+def _is_attachment_href(href: str) -> bool:
+    """Match attachment extensions against the path, ignoring query strings."""
+    return bool(ATTACHMENT_RE.search(urlparse(href).path)) or "/system/files/" in href
 
 
 class MunicipalityScraper(ScraperBase):
@@ -366,6 +430,9 @@ class MunicipalityScraper(ScraperBase):
             if family is None:
                 continue
             url = urljoin(self.base_url + "/", canonical)
+            if not _same_origin(url, self.base_url):
+                logger.debug("%s: ignoring off-origin item %s", self.source_id, url)
+                continue
             if url in seen:
                 continue
             seen.add(url)
@@ -386,10 +453,14 @@ class MunicipalityScraper(ScraperBase):
 
     def _next_page_url(self, soup: BeautifulSoup, current_url: str, page_num: int) -> Optional[str]:
         """Drupal and kirtipur both use ``?page=N``. Check rel=next/pagination links first."""
+        def safe_next(href: str) -> Optional[str]:
+            candidate = urljoin(current_url, href)
+            return candidate if _same_origin(candidate, self.base_url) else None
+
         for a in soup.find_all("a", href=True):
             rel = a.get("rel") or []
             if "next" in rel and a["href"]:
-                return urljoin(current_url, a["href"])
+                return safe_next(a["href"])
         pagination = (
             soup.find("ul", class_=re.compile(r"pagination", re.I))
             or soup.find("div", class_=re.compile(r"pagination", re.I))
@@ -397,16 +468,18 @@ class MunicipalityScraper(ScraperBase):
         if pagination:
             next_page = pagination.find("a", string=str(page_num + 1))
             if next_page and next_page.get("href"):
-                return urljoin(current_url, next_page["href"])
+                return safe_next(next_page["href"])
 
-        # Next page: ?page=N+1, keeping existing query params.
+        # Drupal uses zero-based query pages (the first fallback is ?page=1),
+        # while announcement sites commonly use one-based pages.
         parsed = urlparse(current_url)
         qs = parse_qs(parsed.query)
-        qs["page"] = [str(page_num + 1)]
-        return urljoin(
-            current_url,
-            parsed._replace(query=urlencode(qs, doseq=True)).geturl(),
+        has_drupal_items = any(
+            _guess_family(urlparse(a.get("href", "")).path) == "drupal"
+            for a in soup.find_all("a", href=True)
         )
+        qs["page"] = [str(page_num if has_drupal_items else page_num + 1)]
+        return safe_next(parsed._replace(query=urlencode(qs, doseq=True)).geturl())
 
     # ------------------------------------------------------------------
     # Item pages
@@ -427,7 +500,7 @@ class MunicipalityScraper(ScraperBase):
                 attachment_urls = [
                     urljoin(url, a["href"])
                     for a in soup.find_all("a", href=True)
-                    if ATTACHMENT_RE.search(a["href"]) or "/system/files/" in a["href"]
+                    if _is_attachment_href(a["href"])
                 ]
                 has_meta_date = any(
                     PUBLISH_DATE_META.search(m.get("name") or m.get("property") or "")
@@ -467,7 +540,7 @@ class MunicipalityScraper(ScraperBase):
         attachment_urls: List[str] = []
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            if ATTACHMENT_RE.search(href) or "/system/files/" in href:
+            if _is_attachment_href(href):
                 full = urljoin(url, href)
                 if full not in attachment_urls:
                     attachment_urls.append(full)
@@ -511,8 +584,8 @@ class MunicipalityScraper(ScraperBase):
     def scrape(
         self,
         max_pages: int = DEFAULT_MAX_PAGES,
-        max_items: int = DEFAULT_MAX_ITEMS,
-        since_months: int = DEFAULT_SINCE_MONTHS,
+        max_items: Optional[int] = DEFAULT_MAX_ITEMS,
+        since_months: Optional[int] = DEFAULT_SINCE_MONTHS,
     ) -> List[GovtPost]:
         """Scrape the municipality's notice board end-to-end."""
         home_soup = self._fetch_page(self.base_url + "/")
@@ -550,9 +623,15 @@ class MunicipalityScraper(ScraperBase):
         current_url = listing_url
         page_num = 1
         while listing_soup is not None and page_num <= max_pages:
-            for url, hint, date in self._parse_listing(listing_soup):
+            page_items = self._parse_listing(listing_soup)
+            new_on_page = 0
+            for url, hint, date in page_items:
                 if url not in seen_items:
                     seen_items[url] = (hint, date)
+                    new_on_page += 1
+            if page_num > 1 and new_on_page == 0:
+                logger.info("%s: pagination produced no new items; stopping", self.source_id)
+                break
             next_url = self._next_page_url(listing_soup, current_url, page_num)
             if next_url is None or next_url == current_url or page_num >= max_pages:
                 break
@@ -563,20 +642,25 @@ class MunicipalityScraper(ScraperBase):
         # Dense homepages masquerade as listings (nav rows, ward profiles).
         # Drop old dated items before the cap, newest first; undated items
         # stay in page order (some sites render no dates).
-        cutoff = datetime.now() - timedelta(days=since_months * 30)
+        cutoff = (
+            datetime.now() - timedelta(days=since_months * 30)
+            if since_months is not None and since_months > 0
+            else None
+        )
         recent: List[Tuple[str, Optional[str], datetime]] = []
         undated: List[Tuple[str, Optional[str]]] = []
         for url, (hint, date) in seen_items.items():
             if date is None:
                 undated.append((url, hint))
-            elif date >= cutoff:
+            elif cutoff is None or date >= cutoff:
                 recent.append((url, hint, date))
         recent.sort(key=lambda t: t[2], reverse=True)  # newest first
         all_items = [(u, h) for u, h, _ in recent] + undated
-        all_items = all_items[:max_items]
+        if max_items is not None and max_items > 0:
+            all_items = all_items[:max_items]
         logger.info(
-            "%s: %d/%d items kept (since %d months), fetching details",
-            self.source_id, len(all_items), len(seen_items), since_months,
+            "%s: %d/%d items kept (since %s months), fetching details",
+            self.source_id, len(all_items), len(seen_items), since_months or "all",
         )
 
         posts: List[GovtPost] = []
@@ -612,8 +696,8 @@ def build_configs(entries):
 def fetch_raw_records(
     entries,
     pages: int = DEFAULT_MAX_PAGES,
-    max_items: int = DEFAULT_MAX_ITEMS,
-    since_months: int = DEFAULT_SINCE_MONTHS,
+    max_items: Optional[int] = None,
+    since_months: Optional[int] = None,
 ) -> List[RawRecord]:
     """Scrape a list of municipality entries → RawRecords."""
     records: List[RawRecord] = []
@@ -625,7 +709,8 @@ def fetch_raw_records(
                 max_items=max_items,
                 since_months=since_months,
             )
-            records.extend(post_to_raw(p) for p in posts)
+            for post in posts:
+                records.extend(post_to_raw_records(post))
         except Exception as exc:  # one dead site must not kill the batch
             logger.error("Municipality %s failed: %s", getattr(entry, "id", "?"), exc)
     return records
@@ -784,12 +869,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                     print(f"    AD: {p.date_ad.date()}  BS: {p.date_bs}")
             if out_f:
                 for p in posts:
-                    rec = post_to_raw(p)
-                    if hasattr(rec, "model_dump"):
-                        payload = rec.model_dump(mode="json")
-                    else:
-                        payload = vars(rec)
-                    out_f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+                    for rec in post_to_raw_records(p):
+                        if hasattr(rec, "model_dump"):
+                            payload = rec.model_dump(mode="json")
+                        else:
+                            payload = vars(rec)
+                        out_f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
         print(f"\nTotal: {total} posts from {len(targets)} target(s)")
     finally:
         if out_f:
