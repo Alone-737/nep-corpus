@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from bs4 import BeautifulSoup
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -120,8 +121,14 @@ def _fake_post(cfg):
 class _FakeScraper:
     def __init__(self, cfg):
         self.cfg = cfg
+        self.last_kwargs = {}
 
-    def scrape(self, max_pages, max_items):
+    def scrape(self, max_pages, max_items, since_months=None):
+        self.last_kwargs = {
+            "max_pages": max_pages,
+            "max_items": max_items,
+            "since_months": since_months,
+        }
         return [_fake_post(self.cfg)]
 
 
@@ -144,3 +151,70 @@ def test_cli_bad_config_exits(tmp_path):
     with pytest.raises(SystemExit) as ei:
         ms.main(["--id", "vyas", "--config", str(p)])
     assert ei.value.code == 1
+
+
+def test_cli_since_months_passed(tmp_path, monkeypatch):
+    fake = _FakeScraper(None)
+    monkeypatch.setattr(ms, "MunicipalityScraper", lambda cfg: fake)
+    ms.main(["--id", "vyas", "--config", str(CONFIG), "--since-months", "6"])
+    assert fake.last_kwargs["since_months"] == 6
+
+
+def _scraper_cfg():
+    return SimpleNamespace(
+        id="x1", name="Test", name_ne="टेस्ट नगरपालिका", url="https://x1.gov.np",
+        endpoints={"notice_list": "/list"},
+        province="Bagmati", district="Kathmandu", priority=1,
+    )
+
+
+def test_dense_listing_date_filter_skips_old_items(monkeypatch):
+    """Old dated items must be dropped BEFORE detail fetch (no wasted HTTP)."""
+    scraper = ms.MunicipalityScraper(_scraper_cfg())
+    listing = """
+    <ul>
+      <li><a href="/content/notice-recent">हालको सूचना</a> २०८३-०६-०१</li>
+      <li><a href="/content/notice-old">पुरानो सूचना</a> २०६०-०१-०१</li>
+      <li><a href="/content/notice-nodate">मिति बिनाको सूचना</a></li>
+    </ul>
+    """
+    fetched = []
+
+    def fake(url):
+        fetched.append(url)
+        if url.endswith("/list") or url == "https://x1.gov.np/":
+            return BeautifulSoup(listing, "html.parser")
+        return BeautifulSoup(
+            "<html><body><h1>सार्वजनिक सूचना परीक्षण</h1><p>विवरण</p></body></html>",
+            "html.parser",
+        )
+
+    monkeypatch.setattr(scraper, "_fetch_page", fake)
+    posts = scraper.scrape(max_pages=1, max_items=10, since_months=6)
+
+    detail_fetches = [u for u in fetched if "/content/" in u]
+    assert "https://x1.gov.np/content/notice-old" not in detail_fetches
+    assert len(posts) == 2  # recent + undated kept, old dropped
+
+
+def test_dense_listing_undated_kept_when_cutoff_zero(monkeypatch):
+    scraper = ms.MunicipalityScraper(_scraper_cfg())
+    listing = """
+    <ul>
+      <li><a href="/content/notice-nodate">मिति बिनाको सूचना</a></li>
+    </ul>
+    """
+    fetched = []
+
+    def fake(url):
+        fetched.append(url)
+        if url.endswith("/list") or url == "https://x1.gov.np/":
+            return BeautifulSoup(listing, "html.parser")
+        return BeautifulSoup(
+            "<html><body><h1>सार्वजनिक सूचना परीक्षण</h1><p>विवरण</p></body></html>",
+            "html.parser",
+        )
+
+    monkeypatch.setattr(scraper, "_fetch_page", fake)
+    posts = scraper.scrape(max_pages=1, max_items=10, since_months=0)
+    assert len(posts) == 1

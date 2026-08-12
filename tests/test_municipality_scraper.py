@@ -75,13 +75,13 @@ def test_parse_listing_drupal_items_carry_title_hints():
     items = ms.MunicipalityScraper(
         SourceConfig(id="vyas", name="Vyas", url="https://vyasmun.gov.np")
     )._parse_listing(make_soup(html))
-    urls = [u for u, _ in items]
+    urls = [u for u, _, _ in items]
     assert "https://vyasmun.gov.np/ne/content/drawer-bridda-bhatta-5xja2c9p" in urls
     assert "https://vyasmun.gov.np/ne/content/other-notice-xyz" in urls
     assert not any("suchana-darpan" in u for u in urls)  # listing link must not be an item
-    long_title = [t for u, t in items if u.endswith("5xja2c9p")][0]
+    long_title = [t for u, t, _ in items if u.endswith("5xja2c9p")][0]
     assert long_title.startswith("वृद्ध भत्ता")
-    short = [t for u, t in items if u.endswith("other-notice-xyz")][0]
+    short = [t for u, t, _ in items if u.endswith("other-notice-xyz")][0]
     assert short is None  # "सूचना" too short to be a real title
 
 
@@ -95,7 +95,7 @@ def test_parse_listing_kirtipur_slug_links_no_hints():
     )
     items = scraper._parse_listing(make_soup(html))
     assert len(items) == 2
-    assert all(t is None for _, t in items)  # slug text is never a title hint
+    assert all(t is None for _, t, _ in items)  # slug text is never a title hint
 
 
 def test_parse_listing_normalizes_lang_query_duplicates():
@@ -108,7 +108,7 @@ def test_parse_listing_normalizes_lang_query_duplicates():
         SourceConfig(id="kirtipur", name="Kirtipur", url="https://kirtipurmun.gov.np")
     )
     items = scraper._parse_listing(make_soup(html))
-    urls = [u for u, _ in items]
+    urls = [u for u, _, _ in items]
     assert len(urls) == 2
     assert urls[0] == "https://kirtipurmun.gov.np/announcements/karayapalka-bthaka"
     assert urls[1] == "https://kirtipurmun.gov.np/ne/content/item-one"

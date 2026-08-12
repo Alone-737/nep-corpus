@@ -36,7 +36,7 @@ import logging
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
@@ -62,7 +62,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Listing link discovery: text OR href must carry one of these.
+# Listing links match notice keywords in the text or the href.
 LISTING_TEXT_KEYWORDS = re.compile(
     r"(suchana|suchna|सूचना|notice|announcement|soochana|sucana)", re.I
 )
@@ -70,17 +70,18 @@ LISTING_HREF_KEYWORDS = re.compile(
     r"(suchana|सूचना|notice|announcement|content-list|sucana)", re.I
 )
 
-# Item link families — detected from href, no config needed.
-# Negative lookahead excludes listing pages themselves (suchana-darpan etc.).
+# Item link families, detected from href.
+# Lookahead keeps the listing pages themselves out (suchana-darpan etc.).
 DRUPAL_ITEM = re.compile(r"/(?:ne|en)?/?content/(?!suchana-darpan/?$|sucana/?$|suchana/?$)[^/?#]+/?$")
-# kirtipur-style: /announcements/{slug} (current) + /announcements/detail/{slug} (legacy).
-# Bare /announcements (the listing) is excluded because it has no trailing segment.
+# kirtipur: /announcements/{slug} (current) + /announcements/detail/{slug} (legacy).
+# Bare /announcements is the listing itself - no trailing segment.
 ANNOUNCE_ITEM = re.compile(r"/announcements?/(?:detail/)?[^/?#]+/?$", re.I)
-# kathmandu-style: /archives/notice/{slug-or-id}/ — notice-type/* category pages excluded.
+# kathmandu: /archives/notice/{slug}/, notice-type/* category pages out.
 ARCHIVES_ITEM = re.compile(r"/archives/notice/(?!type/)[^/?#]+/?$", re.I)
 
 # Homepage links that LOOK like a notice listing but never are (procurement
-# boards, tender feeds) — reading them as listing yields 0 items + an extra fetch.
+# boards, tender feeds) — reading them as a listing costs an extra fetch
+# for zero items.
 LISTING_BLOCK_RE = re.compile(r"procurement|tender-notices|javascript:", re.I)
 
 # Attachments / published dates.
@@ -91,11 +92,12 @@ PUBLISH_DATE_META = re.compile(
 
 NEPALI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 
-# Python `re` has no \p{} — use the explicit Devanagari block.
+# No \p{} in Python re - spell out the Devanagari block.
 DEVANAGARI_RE = re.compile("[\u0900-\u097F]")
 
 DEFAULT_MAX_PAGES = 3
 DEFAULT_MAX_ITEMS = 80
+DEFAULT_SINCE_MONTHS = 12
 
 
 def post_to_raw(post: GovtPost) -> RawRecord:
@@ -165,9 +167,9 @@ def _is_nepali_heading(text: Optional[str]) -> bool:
 
 TITLE_JUNK = {"मेनु", "होम", "खोज", "मुख्य", "समाचार"}
 
-# Static site pages that masquerade as notices in drupal homepages
-# (ward profiles, organization charts, contact pages, language switch).
-# Exact-match set + pattern for the more positional nav titles.
+# Static site pages that masquerade as notices on drupal homepages
+# (ward profiles, org charts, contacts, language switch).
+# Exact set + pattern for the more positional nav titles.
 NAV_TITLE_EXACT = {
     "नेपाली",
     "परिचय",
@@ -322,9 +324,8 @@ class MunicipalityScraper(ScraperBase):
             href_match = bool(LISTING_HREF_KEYWORDS.search(href))
             if not (text_match or href_match):
                 continue
-            # A link whose own href is an *item* (notice page) can never be the
-            # listing — long notice titles used to win the scoring and redirect
-            # the crawl into a single notice page (nepalgunj/budhanilkantha).
+            # An item link can never be the listing - long notice titles used to
+            # win the scoring and redirect the crawl (nepalgunj/budhanilkantha).
             canonical = href.split("?")[0]
             if _guess_family(canonical) is not None:
                 continue
@@ -347,18 +348,19 @@ class MunicipalityScraper(ScraperBase):
     # Listing pages
     # ------------------------------------------------------------------
 
-    def _parse_listing(self, soup: BeautifulSoup) -> List[Tuple[str, Optional[str]]]:
-        """Return [(item_url, title_hint)] found on a listing page.
+    def _parse_listing(self, soup: BeautifulSoup) -> List[Tuple[str, Optional[str], Optional[datetime]]]:
+        """Return [(item_url, title_hint, date)] found on a listing page.
 
         URLs are canonicalized (query strings and fragments stripped) so the
         same item surfaced as ``/x`` and ``/x?lang=ne`` collapses to one.
+        ``date`` is harvested from the listing row text (BS or ISO) when the
+        site renders it — free signal, no extra fetch. None when absent.
         """
-        items: List[Tuple[str, Optional[str]]] = []
+        items: List[Tuple[str, Optional[str], Optional[datetime]]] = []
         seen = set()
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            # Canonicalize before family detection so ?page=0 / ?lang=ne
-            # variants still match and collapse to one URL.
+            # Canonicalize first so ?page=0 / ?lang=ne variants collapse to one URL.
             canonical = href.split("?")[0].split("#")[0]
             family = _guess_family(canonical)
             if family is None:
@@ -368,10 +370,18 @@ class MunicipalityScraper(ScraperBase):
                 continue
             seen.add(url)
             text = a.get_text(" ", strip=True)
-            # Drupal item links carry the full Nepali title in text; kirtipur
-            # links carry only a slug — detect via Devanagari presence.
+            # Drupal links carry the full Nepali title; kirtipur links only a slug.
             title_hint = text if _is_nepali_heading(text) else None
-            items.append((url, title_hint))
+            date: Optional[datetime] = None
+            row = a.find_parent(["li", "tr", "div"])
+            if row is not None:
+                row_text = row.get_text(" ", strip=True)
+                date = parse_iso_date(extract_bs_date(row_text)) or parse_iso_date(row_text)
+                if date is not None and date.year > datetime.now().year:
+                    # Listing rows show BS years; parsed as AD they land ~57
+                    # years in the future. Shift back for BS and AD sites.
+                    date = date.replace(year=date.year - 57)
+            items.append((url, title_hint, date))
         return items
 
     def _next_page_url(self, soup: BeautifulSoup, current_url: str, page_num: int) -> Optional[str]:
@@ -389,7 +399,7 @@ class MunicipalityScraper(ScraperBase):
             if next_page and next_page.get("href"):
                 return urljoin(current_url, next_page["href"])
 
-        # Synthesize ?page=N+1 preserving existing query params.
+        # Next page: ?page=N+1, keeping existing query params.
         parsed = urlparse(current_url)
         qs = parse_qs(parsed.query)
         qs["page"] = [str(page_num + 1)]
@@ -407,13 +417,10 @@ class MunicipalityScraper(ScraperBase):
         if soup is None:
             return None
 
-        # Category/list pages masquerade as items (e.g. "वडा विवरण" on vyas
-        # homepages) and render a near-identical news carousel to real
-        # notices, so raw item-link counts cannot separate them. One reliable
-        # tell: real Drupal notices carry attachments or embedded dates,
-        # category rows carry neither. Refuse link-dense Drupal pages with no
-        # attachment and no date. (Announcement-family pages are exempt —
-        # kirtipur's related-notices footer legitimately links 5+ items.)
+        # Category rows (e.g. "वडा विवरण" on vyas) render a
+        # near-identical carousel to real notices. Real ones carry attachments
+        # or dates, category rows neither. Refuse link-dense Drupal pages with
+        # neither. (Announcement pages exempt - kirtipur footers link 5+.)
         if _guess_family(url) == "drupal":
             nested = self._parse_listing(soup)
             if len(nested) >= 8:
@@ -465,7 +472,7 @@ class MunicipalityScraper(ScraperBase):
                 if full not in attachment_urls:
                     attachment_urls.append(full)
 
-        # Content snippet for later enrichment hints.
+        # Snippet for later enrichment.
         content_snippet = None
         main = (
             soup.find("article")
@@ -501,7 +508,12 @@ class MunicipalityScraper(ScraperBase):
     # Orchestration
     # ------------------------------------------------------------------
 
-    def scrape(self, max_pages: int = DEFAULT_MAX_PAGES, max_items: int = DEFAULT_MAX_ITEMS) -> List[GovtPost]:
+    def scrape(
+        self,
+        max_pages: int = DEFAULT_MAX_PAGES,
+        max_items: int = DEFAULT_MAX_ITEMS,
+        since_months: int = DEFAULT_SINCE_MONTHS,
+    ) -> List[GovtPost]:
         """Scrape the municipality's notice board end-to-end."""
         home_soup = self._fetch_page(self.base_url + "/")
         listing_url = self._resolve_listing_url(home_soup)
@@ -532,14 +544,15 @@ class MunicipalityScraper(ScraperBase):
                 listing_url = self.base_url + "/"
                 listing_soup = home_soup
 
-        all_items: List[Tuple[str, Optional[str]]] = []
-        seen_urls: Dict[str, Optional[str]] = {}
+        # Listing fetches are cheap - collect across all pages before capping,
+        # else a dense page 1 hides newer items on later pages.
+        seen_items: Dict[str, Tuple[Optional[str], Optional[datetime]]] = {}
         current_url = listing_url
         page_num = 1
-        while listing_soup is not None and page_num <= max_pages and len(seen_urls) < max_items:
-            for url, hint in self._parse_listing(listing_soup):
-                if url not in seen_urls:
-                    seen_urls[url] = hint
+        while listing_soup is not None and page_num <= max_pages:
+            for url, hint, date in self._parse_listing(listing_soup):
+                if url not in seen_items:
+                    seen_items[url] = (hint, date)
             next_url = self._next_page_url(listing_soup, current_url, page_num)
             if next_url is None or next_url == current_url or page_num >= max_pages:
                 break
@@ -547,11 +560,27 @@ class MunicipalityScraper(ScraperBase):
             page_num += 1
             listing_soup = self._fetch_page(current_url)
 
-        all_items = list(seen_urls.items())
-        logger.info("%s: %d items found, fetching details", self.source_id, len(all_items))
+        # Dense homepages masquerade as listings (nav rows, ward profiles).
+        # Drop old dated items before the cap, newest first; undated items
+        # stay in page order (some sites render no dates).
+        cutoff = datetime.now() - timedelta(days=since_months * 30)
+        recent: List[Tuple[str, Optional[str], datetime]] = []
+        undated: List[Tuple[str, Optional[str]]] = []
+        for url, (hint, date) in seen_items.items():
+            if date is None:
+                undated.append((url, hint))
+            elif date >= cutoff:
+                recent.append((url, hint, date))
+        recent.sort(key=lambda t: t[2], reverse=True)  # newest first
+        all_items = [(u, h) for u, h, _ in recent] + undated
+        all_items = all_items[:max_items]
+        logger.info(
+            "%s: %d/%d items kept (since %d months), fetching details",
+            self.source_id, len(all_items), len(seen_items), since_months,
+        )
 
         posts: List[GovtPost] = []
-        for idx, (url, hint) in enumerate(all_items[:max_items]):
+        for idx, (url, hint) in enumerate(all_items):
             try:
                 post = self._parse_item(url, hint)
             except Exception as exc:  # keep site crawl alive on item errors
@@ -580,13 +609,22 @@ def build_configs(entries):
     return configs
 
 
-def fetch_raw_records(entries, pages: int = DEFAULT_MAX_PAGES, max_items: int = DEFAULT_MAX_ITEMS) -> List[RawRecord]:
+def fetch_raw_records(
+    entries,
+    pages: int = DEFAULT_MAX_PAGES,
+    max_items: int = DEFAULT_MAX_ITEMS,
+    since_months: int = DEFAULT_SINCE_MONTHS,
+) -> List[RawRecord]:
     """Scrape a list of municipality entries → RawRecords."""
     records: List[RawRecord] = []
     for entry in entries:
         try:
             scraper = MunicipalityScraper(entry)
-            posts = scraper.scrape(max_pages=max(1, pages), max_items=max_items)
+            posts = scraper.scrape(
+                max_pages=max(1, pages),
+                max_items=max_items,
+                since_months=since_months,
+            )
             records.extend(post_to_raw(p) for p in posts)
         except Exception as exc:  # one dead site must not kill the batch
             logger.error("Municipality %s failed: %s", getattr(entry, "id", "?"), exc)
@@ -691,6 +729,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--all", action="store_true", help="Scrape all configured municipalities")
     parser.add_argument("--pages", "-p", type=int, default=DEFAULT_MAX_PAGES)
     parser.add_argument("--max-items", type=int, default=DEFAULT_MAX_ITEMS)
+    parser.add_argument(
+        "--since-months", type=int, default=DEFAULT_SINCE_MONTHS,
+        help="Only fetch items dated within the last N months (default: 12)",
+    )
     parser.add_argument("--list", "-l", action="store_true", help="List configured municipalities")
     parser.add_argument("--output", "-o", help="Write posts as JSONL (one RawRecord per line)")
     args = parser.parse_args(argv)
@@ -726,7 +768,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         for mid in targets:
             try:
                 scraper = get_scraper(mid)
-                posts = scraper.scrape(max_pages=args.pages, max_items=args.max_items)
+                posts = scraper.scrape(
+                    max_pages=args.pages,
+                    max_items=args.max_items,
+                    since_months=args.since_months,
+                )
             except Exception as exc:  # one dead site must not kill the batch
                 print(f"\n{mid}: FAILED: {exc}")
                 continue
