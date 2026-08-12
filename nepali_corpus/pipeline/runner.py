@@ -14,16 +14,41 @@ from ..core.services.scrapers import (
     dao_scraper,
     ekantipur_scraper,
     govt_scraper,
+    municipality_scraper,
     news_rss_scraper,
     social_scraper,
 )
 from ..core.services.scrapers.registry import load_registry
+from ..core.models.source_config import SourceConfig
+from ..core.services.scrapers.source_registry import SourceRegistry
 from ..core.services.storage.env_storage import EnvStorageService
 from ..core.utils.cleaning import clean_text, is_nepali, min_length
 from ..core.utils.dedup import deduplicate
 from ..core.utils.enrichment import extract_text, fetch_content
 from ..core.utils.export import export_jsonl
 from ..core.utils.io import ensure_parent_dir, maybe_gzip_path, open_text
+
+def load_municipality_entries(
+    govt_registry_path: Optional[str] = None,
+    groups: Optional[List[str]] = None,
+) -> List[SourceConfig]:
+    """Load municipality entries from the unified registry directory.
+
+    Municipality configs live in ``sources/municipalities.yaml`` (their single
+    source of truth) and are intentionally absent from
+    ``govt_sources_registry.yaml``, so a directory walk is required.
+    """
+    registry_dir = (
+        os.path.dirname(govt_registry_path) if govt_registry_path else "sources"
+    )
+    reg = SourceRegistry(registry_dir)
+    reg.load_all()
+    entries = reg.list(scraper_class="municipality_scraper")
+    if groups:
+        allowed = {group.strip() for group in groups if group and group.strip()}
+        entries = [entry for entry in entries if entry.category in allowed]
+    return entries
+
 
 def ingest_sources_iter(
     rss: bool = True,
@@ -35,6 +60,9 @@ def ingest_sources_iter(
     govt_registry_groups: Optional[List[str]] = None,
     govt_pages: int = 3,
     social: bool = True,
+    municipality: bool = True,
+    municipality_max_items: Optional[int] = None,
+    municipality_since_months: Optional[int] = None,
 ) -> Iterable[RawRecord]:
     """
     Iterator version of ingest_sources.
@@ -46,7 +74,7 @@ def ingest_sources_iter(
             if not key:
                 continue
             if key in ("all", "*"):
-                normalized.update(["rss", "ekantipur", "govt", "dao", "social"])
+                normalized.update(["rss", "ekantipur", "govt", "dao", "social", "municipality"])
                 continue
             if key in ("news", "rss"):
                 normalized.add("rss")
@@ -58,6 +86,8 @@ def ingest_sources_iter(
                 normalized.add("dao")
             elif key in ("social", "twitter", "nitter"):
                 normalized.add("social")
+            elif key in ("municipality", "muni", "towns"):
+                normalized.add("municipality")
         if normalized:
             rss = "rss" in normalized
             ekantipur = "ekantipur" in normalized
@@ -66,6 +96,9 @@ def ingest_sources_iter(
             include_dao_default = not (govt_registry_groups and len(govt_registry_groups) > 0)
             dao = "dao" in normalized or (govt and include_dao_default)
             social = "social" in normalized
+            # Municipality groups remain selectable even when a govt group
+            # filter is present; non-municipality groups simply load no entries.
+            municipality = "municipality" in normalized or govt
 
     if rss:
         for rec in news_rss_scraper.fetch_raw_records():
@@ -87,6 +120,18 @@ def ingest_sources_iter(
     if dao:
         for rec in dao_scraper.fetch_raw_records():
             yield rec
+    if municipality:
+        municipality_entries = load_municipality_entries(
+            govt_registry_path, govt_registry_groups
+        )
+        if municipality_entries:
+            for rec in municipality_scraper.fetch_raw_records(
+                municipality_entries,
+                pages=govt_pages,
+                max_items=municipality_max_items,
+                since_months=municipality_since_months,
+            ):
+                yield rec
     if social:
         for rec in social_scraper.fetch_raw_records(max_pages=govt_pages):
             yield rec
@@ -97,6 +142,9 @@ def ingest_sources(
     govt: bool = True,
     dao: bool = True,
     social: bool = True,
+    municipality: bool = True,
+    municipality_max_items: Optional[int] = None,
+    municipality_since_months: Optional[int] = None,
     sources: Optional[List[str]] = None,
     govt_registry_path: Optional[str] = None,
     govt_registry_groups: Optional[List[str]] = None,
@@ -109,6 +157,9 @@ def ingest_sources(
             govt=govt,
             dao=dao,
             social=social,
+            municipality=municipality,
+            municipality_max_items=municipality_max_items,
+            municipality_since_months=municipality_since_months,
             sources=sources,
             govt_registry_path=govt_registry_path,
             govt_registry_groups=govt_registry_groups,
@@ -273,12 +324,18 @@ def run_pipeline(
     govt_registry_path: Optional[str] = None,
     govt_registry_groups: Optional[List[str]] = None,
     govt_pages: int = 3,
+    municipality: bool = True,
+    municipality_max_items: Optional[int] = None,
+    municipality_since_months: Optional[int] = None,
     gzip_output: bool = False,
 ) -> int:
     raw_records = ingest_sources(
         govt_registry_path=govt_registry_path,
         govt_registry_groups=govt_registry_groups,
         govt_pages=govt_pages,
+        municipality=municipality,
+        municipality_max_items=municipality_max_items,
+        municipality_since_months=municipality_since_months,
     )
     save_raw_jsonl(raw_records, raw_out, gzip_output=gzip_output)
 

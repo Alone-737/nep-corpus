@@ -52,6 +52,9 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         try:
             for rec in ingest_sources_iter(
                 sources=args.sources,
+                municipality=args.municipality,
+                municipality_max_items=args.municipality_max_items,
+                municipality_since_months=args.municipality_since_months,
                 govt_registry_path=args.govt_registry,
                 govt_registry_groups=args.govt_groups,
                 govt_pages=args.govt_pages,
@@ -165,6 +168,9 @@ def cmd_all(args: argparse.Namespace) -> None:
         try:
             for rec in ingest_sources_iter(
                 sources=args.sources,
+                municipality=args.municipality,
+                municipality_max_items=args.municipality_max_items,
+                municipality_since_months=args.municipality_since_months,
                 govt_registry_path=args.govt_registry,
                 govt_registry_groups=args.govt_groups,
                 govt_pages=args.govt_pages,
@@ -237,6 +243,9 @@ def cmd_coordinator(args: argparse.Namespace) -> None:
         "categories": args.categories,
         "workers": args.workers,
         "max_pages": args.max_pages,
+        "municipality_max_items": args.municipality_max_items,
+        "municipality_since_months": args.municipality_since_months,
+        "municipality_enabled": args.municipality,
         "gzip": args.gzip,
         "started_at": datetime.now().isoformat(),
         "resumed": bool(args.resume),
@@ -272,6 +281,9 @@ def cmd_coordinator(args: argparse.Namespace) -> None:
             skip_successful_only=args.skip_successful,
             ocr_enabled=getattr(args, "ocr", False),
             pdf_enabled=getattr(args, "pdf", False),
+            municipality_enabled=args.municipality,
+            municipality_max_items=args.municipality_max_items,
+            municipality_since_months=args.municipality_since_months,
         )
 
         # Signal handling for graceful shutdown
@@ -490,6 +502,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="Max pages per govt endpoint (default: 3)",
     )
+    p_ingest.add_argument(
+        "--no-municipality",
+        action="store_false",
+        dest="municipality",
+        help="Skip municipality notice-board scraping (default: on)",
+    )
+    p_ingest.add_argument(
+        "--municipality-max-items",
+        type=int,
+        default=0,
+        help="Maximum notices per municipality (default: 0, unlimited)",
+    )
+    p_ingest.add_argument(
+        "--municipality-since-months",
+        type=int,
+        default=0,
+        help="Only collect recent municipality notices (default: 0, all dates)",
+    )
     p_ingest.add_argument("--gzip", action="store_true", help="Write .jsonl.gz output")
     p_ingest.set_defaults(func=cmd_ingest)
 
@@ -549,6 +579,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="Max pages per govt endpoint (default: 3)",
     )
+    p_all.add_argument(
+        "--no-municipality",
+        action="store_false",
+        dest="municipality",
+        help="Skip municipality notice-board scraping (default: on)",
+    )
+    p_all.add_argument(
+        "--municipality-max-items",
+        type=int,
+        default=0,
+        help="Maximum notices per municipality (default: 0, unlimited)",
+    )
+    p_all.add_argument(
+        "--municipality-since-months",
+        type=int,
+        default=0,
+        help="Only collect recent municipality notices (default: 0, all dates)",
+    )
     p_all.add_argument("--gzip", action="store_true", help="Write .jsonl.gz output")
     p_all.add_argument("--cache-dir", default="data/html_cache")
     p_all.add_argument("--min-chars", type=int, default=200)
@@ -575,6 +623,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_coord.add_argument("--workers", type=int, default=4, help="Parallel workers (default: 4)")
     p_coord.add_argument("--max-pages", type=int, default=3, help="Max pages per source (default: 3)")
+    p_coord.add_argument(
+        "--no-municipality",
+        action="store_false",
+        dest="municipality",
+        help="Skip municipality notice-board scraping (default: on)",
+    )
+    p_coord.add_argument(
+        "--municipality-max-items",
+        type=int,
+        default=0,
+        help="Maximum notices per municipality (default: 0, unlimited)",
+    )
+    p_coord.add_argument(
+        "--municipality-since-months",
+        type=int,
+        default=0,
+        help="Only collect recent municipality notices (default: 0, all dates)",
+    )
     p_coord.add_argument("--govt-registry", help="Path to sources/govt_sources_registry.yaml")
     p_coord.add_argument(
         "--govt-groups",
