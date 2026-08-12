@@ -36,6 +36,8 @@ def _capture_muni_fetch(monkeypatch, records=None):
     def fake(entries, **kwargs):
         captured["entries"] = entries
         captured["pages"] = kwargs.get("pages")
+        captured["max_items"] = kwargs.get("max_items")
+        captured["since_months"] = kwargs.get("since_months")
         return records if records is not None else [MUNI] * len(entries)
 
     monkeypatch.setattr(pipeline_runner.municipality_scraper, "fetch_raw_records", fake)
@@ -134,3 +136,38 @@ class TestGovtAutoInclude:
             )
         )
         assert captured == {}
+
+    def test_metropolitan_group_selects_only_metropolitan_entries(self, monkeypatch):
+        monkeypatch.chdir(REPO_ROOT)
+        captured = _capture_muni_fetch(monkeypatch, records=[])
+
+        list(
+            pipeline_runner.ingest_sources_iter(
+                sources=["govt"],
+                govt_registry_path=str(
+                    REPO_ROOT / "sources" / "govt_sources_registry.yaml"
+                ),
+                govt_registry_groups=["metropolitan"],
+            )
+        )
+
+        assert len(captured["entries"]) == 6
+        assert {entry.category for entry in captured["entries"]} == {"metropolitan"}
+
+    def test_explicit_municipality_selection_honors_group_filter(self, monkeypatch):
+        monkeypatch.chdir(REPO_ROOT)
+        captured = _capture_muni_fetch(monkeypatch, records=[])
+
+        list(
+            pipeline_runner.ingest_sources_iter(
+                sources=["municipality"],
+                govt_registry_groups=["sub_metropolitan"],
+                municipality_max_items=25,
+                municipality_since_months=6,
+            )
+        )
+
+        assert len(captured["entries"]) == 9
+        assert captured["pages"] == 3
+        assert captured["max_items"] == 25
+        assert captured["since_months"] == 6

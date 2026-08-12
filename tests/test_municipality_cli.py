@@ -13,6 +13,8 @@ from bs4 import BeautifulSoup
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from nepali_corpus.core.services.scrapers import municipality_scraper as ms
+from nepali_corpus.core.services.scrapers.control import ScrapeCoordinator
+from scripts.corpus_cli import build_parser
 
 REPO = Path(__file__).resolve().parents[1]
 CONFIG = REPO / "sources" / "municipalities.yaml"
@@ -30,6 +32,9 @@ def test_real_config_loads_all_49():
     # host corrections landed
     assert cfgs["biratnagar"].url == "https://biratnagarmun.gov.np"
     assert cfgs["janakpurdham"].url == "https://janakpurmun.gov.np"
+    assert cfgs["lahan"].province == "Madhesh"
+    assert cfgs["rajbiraj"].province == "Madhesh"
+    assert cfgs["tarkeshwor"].category == "municipality"
 
 
 def test_guard_no_municipality_entries_in_govt_registry():
@@ -158,6 +163,44 @@ def test_cli_since_months_passed(tmp_path, monkeypatch):
     monkeypatch.setattr(ms, "MunicipalityScraper", lambda cfg: fake)
     ms.main(["--id", "vyas", "--config", str(CONFIG), "--since-months", "6"])
     assert fake.last_kwargs["since_months"] == 6
+
+
+def test_corpus_cli_municipality_limits_default_to_full_corpus():
+    parser = build_parser()
+    args = parser.parse_args(["coordinator"])
+    assert args.municipality is True
+    assert args.municipality_max_items == 0
+    assert args.municipality_since_months == 0
+
+
+def test_coordinator_passes_municipality_limits(monkeypatch):
+    calls = []
+
+    class FakeMunicipalityScraper:
+        def __init__(self, config):
+            self.config = config
+
+        def scrape(self, **kwargs):
+            calls.append(kwargs)
+            return []
+
+    monkeypatch.setattr(ms, "MunicipalityScraper", FakeMunicipalityScraper)
+    coordinator = ScrapeCoordinator(
+        None,
+        municipality_max_items=25,
+        municipality_since_months=6,
+    )
+    jobs = coordinator._build_jobs(
+        ["Gov"],
+        max_pages=4,
+        govt_registry_path=str(GOVT_REGISTRY),
+        govt_registry_groups=["metropolitan"],
+        num_sources=1,
+    )
+
+    assert len(jobs) == 1
+    assert jobs[0].func() == []
+    assert calls == [{"max_pages": 4, "max_items": 25, "since_months": 6}]
 
 
 def _scraper_cfg():

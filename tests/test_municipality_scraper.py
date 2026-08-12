@@ -125,6 +125,18 @@ def test_parse_listing_deduplicates_urls():
     assert len(items) == 1
 
 
+def test_parse_listing_rejects_external_item_urls():
+    html = """
+    <a href="https://evil.example/ne/content/poison">
+      सरकारी सूचना परीक्षण
+    </a>
+    """
+    scraper = ms.MunicipalityScraper(
+        SourceConfig(id="vyas", name="Vyas", url="https://vyasmun.gov.np")
+    )
+    assert scraper._parse_listing(make_soup(html)) == []
+
+
 # ----------------------------------------------------------------------
 # Listing URL discovery
 # ----------------------------------------------------------------------
@@ -176,6 +188,17 @@ def test_next_page_url_synthesizes_page_param():
     assert url == "https://kirtipurmun.gov.np/announcements?page=2"
 
 
+def test_next_page_url_uses_zero_based_drupal_fallback():
+    html = '<a href="/ne/content/notice-one">पहिलो सरकारी सूचना</a>'
+    scraper = ms.MunicipalityScraper(
+        SourceConfig(id="vyas", name="Vyas", url="https://vyasmun.gov.np")
+    )
+    url = scraper._next_page_url(
+        make_soup(html), "https://vyasmun.gov.np/ne/content/suchana-darpan", 1
+    )
+    assert url == "https://vyasmun.gov.np/ne/content/suchana-darpan?page=1"
+
+
 def test_next_page_url_keeps_existing_query_params():
     scraper = ms.MunicipalityScraper(
         SourceConfig(id="vyas", name="Vyas", url="https://vyasmun.gov.np")
@@ -194,6 +217,16 @@ def test_next_page_url_honors_rel_next():
     )
     url = scraper._next_page_url(make_soup(html), "https://kirtipurmun.gov.np/announcements", 1)
     assert url == "https://kirtipurmun.gov.np/announcements?page=2"
+
+
+def test_next_page_url_rejects_external_rel_next():
+    html = '<a rel="next" href="https://evil.example/ne/content/page-2">Next</a>'
+    scraper = ms.MunicipalityScraper(
+        SourceConfig(id="vyas", name="Vyas", url="https://vyasmun.gov.np")
+    )
+    assert scraper._next_page_url(
+        make_soup(html), "https://vyasmun.gov.np/ne/content/suchana-darpan", 1
+    ) is None
 
 
 # ----------------------------------------------------------------------
@@ -432,6 +465,29 @@ def test_parse_item_uses_second_heading_when_h1_is_brand(monkeypatch):
     assert post.title == "आवश्यक सतर्कता अपनाउनु हुन अनुरोध"  # trailing danda trimmed
 
 
+def test_parse_item_keeps_notice_title_containing_municipality_name(monkeypatch):
+    html = """
+    <html><body>
+      <h1>काठमाडौं महानगरपालिकाको अत्यन्त जरुरी सूचना</h1>
+      <article>यो काठमाडौं महानगरपालिकाबाट प्रकाशित विस्तृत सार्वजनिक सूचना हो।</article>
+    </body></html>
+    """
+    scraper = ms.MunicipalityScraper(
+        SourceConfig(
+            id="kathmandu",
+            name="Kathmandu Metropolitan City",
+            name_ne="काठमाडौं महानगरपालिका",
+            url="https://kathmandu.gov.np",
+        )
+    )
+    monkeypatch.setattr(scraper, "_fetch_page", lambda url: make_soup(html))
+    post = scraper._parse_item(
+        "https://kathmandu.gov.np/archives/notice/urgent", None
+    )
+    assert post is not None
+    assert post.title == "काठमाडौं महानगरपालिकाको अत्यन्त जरुरी सूचना"
+
+
 def test_parse_item_skips_link_dense_drupal_category_pages(monkeypatch):
     """vyas category pages ('वडा विवरण') render a news carousel inside the
     page body; distinguish by absence of attachments AND dates."""
@@ -500,3 +556,62 @@ def test_parse_item_post_to_raw_roundtrip(monkeypatch):
     assert raw.raw_meta["province"] == "Gandaki"
     assert raw.date_bs is None  # no BS text on this Drupal page
     assert raw.published_at == "2026-08-10T00:00:00"
+
+
+def test_post_to_raw_records_emits_pdf_attachments_with_query_strings(monkeypatch):
+    html = DRUPAL_ITEM_HTML.replace(
+        "FINAL%20NOTICE.pdf", "FINAL%20NOTICE.pdf?download=1"
+    )
+    scraper = ms.MunicipalityScraper(
+        SourceConfig(
+            id="vyas",
+            name="Vyas",
+            url="https://vyasmun.gov.np",
+            province="Gandaki",
+            district="Tanahun",
+        )
+    )
+    monkeypatch.setattr(scraper, "_fetch_page", lambda url: make_soup(html))
+    post = scraper._parse_item("https://vyasmun.gov.np/ne/content/x", None)
+
+    records = ms.post_to_raw_records(post)
+
+    assert len(records) == 2
+    page, attachment = records
+    assert page.raw_meta["record_kind"] == "notice_page"
+    assert page.summary
+    assert attachment.url.endswith(".pdf?download=1")
+    assert attachment.content_type == "pdf"
+    assert attachment.raw_meta["record_kind"] == "notice_attachment"
+    assert attachment.raw_meta["parent_notice_url"] == page.url
+
+
+def test_scrape_stops_when_synthesized_page_repeats_items(monkeypatch):
+    cfg = SourceConfig(
+        id="vyas",
+        name="Vyas",
+        url="https://vyasmun.gov.np",
+        endpoints={"notice_list": "/ne/content/suchana-darpan"},
+    )
+    scraper = ms.MunicipalityScraper(cfg)
+    listing = make_soup(
+        """
+        <a href="/ne/content/repeated-notice">दोहोरिएको सरकारी सूचना</a>
+        <a href="/ne/content/second-notice">दोस्रो सरकारी सूचना परीक्षण</a>
+        """
+    )
+    fetched = []
+
+    def fake_fetch(url):
+        fetched.append(url)
+        if "/ne/content/repeated-notice" in url or "/ne/content/second-notice" in url:
+            return make_soup("<h1>दोहोरिएको सरकारी सूचना</h1><p>विस्तृत विवरण यहाँ छ।</p>")
+        return listing
+
+    monkeypatch.setattr(scraper, "_fetch_page", fake_fetch)
+    posts = scraper.scrape(max_pages=1000, max_items=None, since_months=None)
+
+    listing_fetches = [url for url in fetched if "suchana-darpan" in url]
+    assert len(listing_fetches) == 2
+    assert listing_fetches[-1].endswith("?page=1")
+    assert len(posts) == 2
